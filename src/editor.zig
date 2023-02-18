@@ -23,7 +23,7 @@ const Editor = struct {
     statusmsg: [80]u8,
     statusmsg_time: u64,
     syntax: ?EditorSyntax, // Current syntax highlight, or NULL.
-    allocator: Allocator, 
+    allocator: Allocator,
 
     const Self = @This();
 
@@ -49,7 +49,7 @@ const Editor = struct {
     fn updateSize(self: *Self, rows: u32, cols: u32) void {
         self.screenrows = rows;
         self.screencols = cols;
-      }
+    }
 
     // Select the syntax highlight scheme depending on the filename,
     // setting it in the global self E.syntax.
@@ -259,14 +259,16 @@ const Editor = struct {
                         }
                         screen_buffer.appendSlice(chars[j]);
                     } else {
-                        var color = syntaxToColor(highlight[j]);
+                        var color = Syntax.syntaxToColor(highlight[j]);
                         if (color != current_color) {
-                            var buf: [16]u8;
-                            var clen = snprintf(buf, sizeof(buf), "\x1b[%dm", color);
+                            var buf: [16]u8 = undefined;
+                            var fixed_allo = std.heap.FixedBufferAllocator.init(&buf);
+                            const alloc = fixed_allo.allocator();
+                            _ = try std.fmt.allocPrint(alloc, "\x1b[{d}m", .{color});
                             current_color = color;
-                            screen_buffer.appendSlice(buf, clen);
+                            screen_buffer.appendSlice(buf);
                         }
-                        screen_buffer.appendSlice(c + j);
+                        screen_buffer.appendSlice(chars[j .. j + 1]);
                     }
                 }
             }
@@ -278,49 +280,49 @@ const Editor = struct {
         // Create a two rows status. First row:
         screen_buffer.appendSlice("\x1b[0K");
         screen_buffer.appendSlice("\x1b[7m");
-        var status: [80]u8;
-        var rstatus: [80]u8;
-        var len = snprintf(status, sizeof(status), "%.20s - %d lines %s", self.filename, self.numrows); //, self.dirty ? "(modified)" : "");
-        var rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", self.rowoff + self.cy + 1, self.numrows);
-        if (len > self.screencols) len = self.screencols;
-        screen_buffer.appendSlice(status);
-        while (len < self.screencols) {
-            if (self.screencols - len == rlen) {
-                screen_buffer.appendSlice(rstatus);
-                break;
-            } else {
-                screen_buffer.appendSlice(" ");
-                len += 1;
-            }
-        }
+        // var status: [80]u8 = undefined;
+        // var rstatus: [80]u8 = undefined;
+        // var len = snprintf(status, sizeof(status), "%.20s - %d lines %s", self.filename, self.numrows); //, self.dirty ? "(modified)" : "");
+        // var rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", self.rowoff + self.cy + 1, self.numrows);
+        // if (len > self.screencols) len = self.screencols;
+        // screen_buffer.appendSlice(status);
+        // while (len < self.screencols) {
+        //     if (self.screencols - len == rlen) {
+        //         screen_buffer.appendSlice(rstatus);
+        //         break;
+        //     } else {
+        //         screen_buffer.appendSlice(" ");
+        //         len += 1;
+        //     }
+        // }
         screen_buffer.appendSlice("\x1b[0m\r\n");
 
         // Second row depends on self.statusmsg and the status message update time.
         screen_buffer.appendSlice("\x1b[0K", 4);
-        var msglen = strlen(self.statusmsg);
-        if (msglen & &time(NULL) - self.statusmsg_time < 5)
-            screen_buffer.appendSlice(self.statusmsg); //, msglen <= self.screencols ? msglen : self.screencols);
+        // var msglen = strlen(self.statusmsg);
+        // if (msglen & &time(NULL) - self.statusmsg_time < 5)
+        //     screen_buffer.appendSlice(self.statusmsg); //, msglen <= self.screencols ? msglen : self.screencols);
 
         // Put cursor at its current position. Note that the horizontal position
         // at which the cursor is displayed may be different compared to 'self.cx'
-        // because of Tscreen_buffers
-        var j;
-        var cx = 1;
-        var filerow = self.rowoff + self.cy;
-        var row = if (filerow >= self.numrows) {
-            null;
-        } else {
-            &self.row[filerow];
-        };
-        if (row) {
-            j = self.coloff;
-            while (j < (self.cx + self.coloff)) : (j += 1) {
-                if (j < row.size and row.chars[j] == Tscreen_buffer) cx += 7 - ((cx) % 8);
-                cx += 1;
-            }
-        }
-        snprintf(buf, sizeof(buf), "\x1b[%d;%dH", self.cy + 1, cx);
-        screen_buffer.appendSlice(buf);
+        // because of TABs
+        // var j = 0;
+        // var cx = 1;
+        // var filerow = self.rowoff + self.cy;
+        // var row = if (filerow >= self.numrows) {
+        //     null;
+        // } else {
+        //     &self.row[filerow];
+        // };
+        // if (row) {
+        //     j = self.coloff;
+        //     while (j < (self.cx + self.coloff)) : (j += 1) {
+        //         if (j < row.size and row.chars[j] == Key.TAB) cx += 7 - ((cx) % 8);
+        //         cx += 1;
+        //     }
+        // }
+        // snprintf(buf, sizeof(buf), "\x1b[%d;%dH", self.cy + 1, cx);
+        // screen_buffer.appendSlice(buf);
         screen_buffer.appendSlice("\x1b[?25h"); // Show cursor.
         try stdio.write(screen_buffer);
     }
@@ -561,8 +563,8 @@ const Editor = struct {
                 break;
             },
             // .CTRL_F => {
-                // editorFind(fd);
-                // break;
+            // editorFind(fd);
+            // break;
             // },
             .BACKSPACE, // Backspace
             .CTRL_H, // Ctrl-h
