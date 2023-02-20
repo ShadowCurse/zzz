@@ -178,49 +178,41 @@ pub fn main() anyerror!void {
         std.process.exit(1);
     }
 
-    // var a = "abc";
-    // var b = "abc";
-    // const message = [_]u8{ 'h', 'e', 'l', 'l', 'o' };
-    // const message2 = [_]u8{ 'h', 'e', 'l', 'l', 'o' };
-
-    // var c = a[0..a.len] == b[0..b.len];
-    // var c = a == b;
-    // var c = message == message2;
-    // std.log.info("Equal: {}", .{c});
-
-    var row = try Row.EditorRow.init(null, allocator);
-    defer row.deinit();
-
-    var c = row.hasOpenComment();
-    std.log.info("C: {}", .{c});
-
-    var editor = Editor.new();
+    // var row = try Row.EditorRow.init(null, allocator);
+    // defer row.deinit();
+    //
+    // var c = row.hasOpenComment();
+    // std.log.info("C: {}", .{c});
+    //
+    var editor = Editor.new(allocator);
 
     // TODO
-    editor.updateSize(1, 1);
+    // editor.updateSize(1, 1);
 
     // TODO
     // signal(SIGWINCH, handleSigWinCh);
 
-    // state.selectSyntaxHighlight(args[1]);
-    // state.editorOpen(argv[1]);
+    editor.selectSyntaxHighlight(args[1]);
+    try editor.editorOpen(args[1]);
 
     var orig_termios = try enableRawMode(std.io.getStdIn());
+    //
+    // var key = try Key.readKey(std.io.getStdIn());
+    // std.log.info("Read: {}", .{key});
+    //
+    // var pos = try getCursorPosition(std.io.getStdIn(), std.io.getStdOut());
+    // std.log.info("Cursor pos: {}", .{pos});
+    //
+    // var size = try getWindowSize(std.io.getStdIn(), std.io.getStdOut());
+    // std.log.info("Window size: {}", .{size});
+    //
 
-    var key = try Key.readKey(std.io.getStdIn());
-    std.log.info("Read: {}", .{key});
-
-    var pos = try getCursorPosition(std.io.getStdIn(), std.io.getStdOut());
-    std.log.info("Cursor pos: {}", .{pos});
-
-    var size = try getWindowSize(std.io.getStdIn(), std.io.getStdOut());
-    std.log.info("Window size: {}", .{size});
-
+    while (true) {
+        try editor.refreshScreen(std.io.getStdIn());
+        var key = try Key.readKey(std.io.getStdIn());
+        editor.processKeypress(key);
+    }
     try disableRawMode(&orig_termios, std.io.getStdIn());
 
     // editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
-    // while (1) {
-    //     editorRefreshScreen();
-    //     editorProcessKeypress(STDIN_FILENO);
-    // }
 }
