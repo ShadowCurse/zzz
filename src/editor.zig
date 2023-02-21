@@ -14,7 +14,7 @@ cx: u32, // Cursor x position in characters
 cy: u32, // Cursor y position in characters
 rowoff: u32, // Offset of row displayed.
 coloff: u32, // Offset of column displayed.
-screenrows: u32, // Number of rows that we can show
+screenrows: u32, // Number dkjfbnk;djfof rows that we can show
 screencols: u32, // Number of cols that we can show
 rawmode: bool, // Is terminal raw mode enabled?
 rows: ?[]EditorRow, // Rows
@@ -55,8 +55,8 @@ pub fn updateSize(self: *Self, rows: u32, cols: u32) void {
 // setting it in the global self E.syntax.
 pub fn selectSyntaxHighlight(self: *Self, filename: []u8) void {
     for (HLDB) |s| {
-        for (s.filename) |extention| {
-            if (std.mem.endsWith(u8, filename, extention))
+        for (s.extensions) |ext| {
+            if (std.mem.endsWith(u8, filename, ext))
                 self.syntax = s;
             return;
         }
@@ -611,8 +611,10 @@ pub fn editorOpen(self: *Self, filename: []u8) !void {
     var buf_reader = std.io.bufferedReader(file.reader());
     var in_stream = buf_reader.reader();
 
-    while (try in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| {
+    while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| {
         self.insertRow(self.rows.len, line);
+    } else |e| {
+      return e;
     }
 }
 

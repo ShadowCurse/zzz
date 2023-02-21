@@ -17,16 +17,16 @@ pub const HL_HIGHLIGHT_STRINGS = (1 << 0);
 pub const HL_HIGHLIGHT_NUMBERS = (1 << 1);
 
 pub const EditorSyntax = struct {
-    filematch: [][]const u8,
-    keywords: [][]u8,
-    singleline_comment_start: []u8,
-    multiline_comment_start: []u8,
-    multiline_comment_end: []u8,
+    extensions: []const []const u8,
+    keywords: []const []const u8,
+    singleline_comment_start: []const u8,
+    multiline_comment_start: []const u8,
+    multiline_comment_end: []const u8,
     flags: u32,
 };
 
 const C_HL_extensions = [_][]const u8{ ".c", ".h", ".cpp", ".hpp", ".cc" };
-const C_HL_keywords = [_][]u8{
+const C_HL_keywords = [_][]const u8{
     // C Keywords
     "auto",          "break",       "case",      "continue",  "default",      "do",        "else",   "enum",
     "extern",        "for",         "goto",      "if",        "register",     "return",    "sizeof", "static",
@@ -48,16 +48,16 @@ const C_HL_keywords = [_][]u8{
 };
 
 // Here we define an array of syntax highlights by extensions, keywords, comments delimiters and flags.
-pub const HLDB: []EditorSyntax = {
+pub const HLDB = [_]EditorSyntax{
     // C / C++
-    EditorSyntax{
-        .filematch = C_HL_extensions[0..],
-        .keywords = C_HL_keywords[0..],
+    EditorSyntax {
+        .extensions = &C_HL_extensions,
+        .keywords = &C_HL_keywords,
         .singleline_comment_start = "//",
         .multiline_comment_start = "/*",
         .multiline_comment_end = "*/",
         .flags = HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS,
-    };
+    }
 };
 
 // Maps syntax highlight token types to terminal colors.
