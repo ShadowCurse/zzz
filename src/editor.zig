@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const String = std.ArrayListUnmanaged(u8);
+const Rows = std.ArrayListUnmanaged(EditorRow);
 
 const Row = @import("row.zig");
 const Key = @import("key.zig");
@@ -17,17 +18,17 @@ coloff: u32, // Offset of column displayed.
 screenrows: u32, // Number dkjfbnk;djfof rows that we can show
 screencols: u32, // Number of cols that we can show
 rawmode: bool, // Is terminal raw mode enabled?
-rows: ?[]EditorRow, // Rows
+rows: Rows, // Rows
 dirty: bool, // File modified but not saved.
 filename: ?[]u8, // Currently open filename
 statusmsg: [80]u8,
 statusmsg_time: u64,
-syntax: ?EditorSyntax, // Current syntax highlight, or NULL.
+syntax: ?*EditorSyntax, // Current syntax highlight, or NULL.
 allocator: Allocator,
 
 const Self = @This();
 
-pub fn new(allocator: Allocator) Self {
+pub fn new(allocator: Allocator) !Self {
     return Self{
         .cx = 0,
         .cy = 0,
@@ -36,7 +37,7 @@ pub fn new(allocator: Allocator) Self {
         .screenrows = 0,
         .screencols = 0,
         .rawmode = false,
-        .rows = null,
+        .rows = try Rows.initCapacity(allocator, 0),
         .dirty = false,
         .filename = null,
         .statusmsg = undefined,
@@ -612,9 +613,10 @@ pub fn editorOpen(self: *Self, filename: []u8) !void {
     var in_stream = buf_reader.reader();
 
     while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| {
-        self.insertRow(self.rows.len, line);
+        const row = try EditorRow.new(line, self.syntax, self.allocator);
+        try self.rows.append(self.allocator, row);
     } else |e| {
-      return e;
+        return e;
     }
 }
 

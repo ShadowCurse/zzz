@@ -30,13 +30,12 @@ pub const EditorRow = struct {
 
     const Self = @This();
 
-    pub fn init(syntax: ?*EditorSyntax, allocator: Allocator) !Self {
-        var chars = try allocator.alloc(u8, 0);
+    pub fn new(str: []u8, syntax: ?*EditorSyntax, allocator: Allocator) !Self {
         var highlight = try allocator.alloc(u8, 0);
         var render = try allocator.alloc(u8, 0);
         var self = Self{
             .idx = 0,
-            .chars = chars,
+            .chars = str,
             .highlight = highlight,
             .render = render,
             // .hl_oc = false,
@@ -115,9 +114,9 @@ pub const EditorRow = struct {
         }
         const syntax = self.syntax.?;
         const keywords = syntax.keywords;
-        const scs = &syntax.singleline_comment_start;
-        const mcs = &syntax.multiline_comment_start;
-        const mce = &syntax.multiline_comment_end;
+        const scs = syntax.singleline_comment_start;
+        const mcs = syntax.multiline_comment_start;
+        const mce = syntax.multiline_comment_end;
 
         // Point to the first non-space char.
         var i: usize = 0;
@@ -131,7 +130,7 @@ pub const EditorRow = struct {
 
         outer: while (i < self.render.len) {
             // Handle // comments.
-            if (word_start and &self.render[i .. i + 2] == scs) {
+            if (word_start and &self.render[i .. i + 2] == &scs) {
                 // From here to end is a comment
                 std.mem.set(u8, self.highlight[i..self.highlight.len], Syntax.HL_COMMENT);
                 return false;
@@ -140,7 +139,7 @@ pub const EditorRow = struct {
             // Handle multi line comments.
             if (in_comment) {
                 self.highlight[i] = Syntax.HL_MLCOMMENT;
-                if (&self.render[i .. i + 2] == mce) {
+                if (&self.render[i .. i + 2] == &mce) {
                     self.highlight[i + 1] = Syntax.HL_MLCOMMENT;
                     in_comment = false;
                     word_start = true;
@@ -151,7 +150,7 @@ pub const EditorRow = struct {
                     i += 1;
                     continue;
                 }
-            } else if (&self.render[i .. i + 2] == mcs) {
+            } else if (&self.render[i .. i + 2] == &mcs) {
                 self.highlight[i] = Syntax.HL_MLCOMMENT;
                 self.highlight[i + 1] = Syntax.HL_MLCOMMENT;
                 in_comment = true;
