@@ -184,7 +184,7 @@ pub fn main() anyerror!void {
     // var c = row.hasOpenComment();
     // std.log.info("C: {}", .{c});
     //
-    var editor = Editor.new(allocator);
+    var editor = try Editor.new(allocator);
 
     // TODO
     // editor.updateSize(1, 1);
