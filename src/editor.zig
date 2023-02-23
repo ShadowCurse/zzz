@@ -23,7 +23,7 @@ dirty: bool, // File modified but not saved.
 filename: ?[]u8, // Currently open filename
 statusmsg: [80]u8,
 statusmsg_time: u64,
-syntax: ?*EditorSyntax, // Current syntax highlight, or NULL.
+syntax: ?*const EditorSyntax, // Current syntax highlight, or NULL.
 allocator: Allocator,
 
 const Self = @This();
@@ -58,7 +58,7 @@ pub fn selectSyntaxHighlight(self: *Self, filename: []u8) void {
     for (HLDB) |s| {
         for (s.extensions) |ext| {
             if (std.mem.endsWith(u8, filename, ext))
-                self.syntax = s;
+                self.syntax = &s;
             return;
         }
     }
@@ -222,7 +222,7 @@ fn delRow(self: *Self, at: i32) void {
 // This function writes the whole screen using VT100 escape characters
 // starting from the logical self of the editor in the global self 'E'.
 pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
-    var screen_buffer = String.initCapacity(self.allocator, 0);
+    var screen_buffer = try String.initCapacity(self.allocator, 0);
     defer screen_buffer.deinit(self.allocator);
 
     screen_buffer.appendSlice("\x1b[?25l"); // Hide cursor
@@ -440,7 +440,7 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
 // }
 
 // Handle cursor position change because arrow keys were pressed.
-fn moveCursor(self: *Self, key: Key.KEY_ACTION) void {
+fn moveCursor(self: *Self, key: Key.Key) void {
     var cursor_row = self.rowoff + self.cy;
     var cursor_col = self.coloff + self.cx;
     var rowlen = 0;
@@ -596,7 +596,7 @@ pub fn processKeypress(self: *Self, key: Key.Key) void {
             // break;
         },
         else => {
-            self.insertChar(key);
+            self.insertChar(@enumToInt(key));
         },
     }
 

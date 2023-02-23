@@ -25,12 +25,12 @@ pub const EditorRow = struct {
     highlight: []u8, // syntax highlight type for each character in render
     render: []u8, // row content "rendered" for screen (for TABs).
     // hl_oc: bool, // row had open comment at end in last syntax highlight check.
-    syntax: ?*EditorSyntax,
+    syntax: ?*const EditorSyntax,
     allocator: Allocator,
 
     const Self = @This();
 
-    pub fn new(str: []u8, syntax: ?*EditorSyntax, allocator: Allocator) !Self {
+    pub fn new(str: []u8, syntax: ?*const EditorSyntax, allocator: Allocator) !Self {
         var highlight = try allocator.alloc(u8, 0);
         var render = try allocator.alloc(u8, 0);
         var self = Self{
