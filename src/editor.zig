@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const String = std.ArrayListUnmanaged(u8);
-const Rows = std.ArrayListUnmanaged(EditorRow);
+const String = std.ArrayList(u8);
+const Rows = std.ArrayList(EditorRow);
 
 const Row = @import("row.zig");
 const Key = @import("key.zig");
@@ -223,14 +223,14 @@ fn delRow(self: *Self, at: i32) void {
 // starting from the logical self of the editor in the global self 'E'.
 pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     var screen_buffer = try String.initCapacity(self.allocator, 0);
-    defer screen_buffer.deinit(self.allocator);
+    defer screen_buffer.deinit();
 
-    screen_buffer.appendSlice("\x1b[?25l"); // Hide cursor
-    screen_buffer.appendSlice("\x1b[H"); // Go home
-    for (self.rows) |_, y| {
+    try screen_buffer.appendSlice("\x1b[?25l"); // Hide cursor
+    try screen_buffer.appendSlice("\x1b[H"); // Go home
+    for (self.rows.items) |_, y| {
         var filerow = self.rowoff + y;
         if (filerow >= self.rows.len) {
-            screen_buffer.appendSlice("~\x1b[0K\r\n");
+            try try screen_buffer.appendSlice("~\x1b[0K\r\n");
             continue;
         }
 
@@ -245,20 +245,20 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
             while (j < len) : (j += 1) {
                 if (highlight[j] == Syntax.HL_NONPRINT) {
                     var symbol: u8 = undefined;
-                    screen_buffer.appendSlice("\x1b[7m");
+                    try screen_buffer.appendSlice("\x1b[7m");
                     if (chars[j] <= 26) {
                         symbol = '@' + chars[j];
                     } else {
                         symbol = '?';
                     }
-                    screen_buffer.appendSlice(&symbol);
-                    screen_buffer.appendSlice("\x1b[0m");
+                    try screen_buffer.appendSlice(&symbol);
+                    try screen_buffer.appendSlice("\x1b[0m");
                 } else if (highlight[j] == Syntax.HL_NORMAL) {
                     if (current_color != -1) {
-                        screen_buffer.appendSlice("\x1b[39m");
+                        try screen_buffer.appendSlice("\x1b[39m");
                         current_color = -1;
                     }
-                    screen_buffer.appendSlice(chars[j]);
+                    try screen_buffer.appendSlice(chars[j]);
                 } else {
                     var color = Syntax.syntaxToColor(highlight[j]);
                     if (color != current_color) {
@@ -267,20 +267,20 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
                         const alloc = fixed_allo.allocator();
                         _ = try std.fmt.allocPrint(alloc, "\x1b[{d}m", .{color});
                         current_color = color;
-                        screen_buffer.appendSlice(buf);
+                        try screen_buffer.appendSlice(buf);
                     }
-                    screen_buffer.appendSlice(chars[j .. j + 1]);
+                    try screen_buffer.appendSlice(chars[j .. j + 1]);
                 }
             }
         }
-        screen_buffer.appendSlice("\x1b[39m");
-        screen_buffer.appendSlice("\x1b[0K");
-        screen_buffer.appendSlice("\r\n");
+        try screen_buffer.appendSlice("\x1b[39m");
+        try screen_buffer.appendSlice("\x1b[0K");
+        try screen_buffer.appendSlice("\r\n");
     }
 
     // Create a two rows status. First row:
-    screen_buffer.appendSlice("\x1b[0K");
-    screen_buffer.appendSlice("\x1b[7m");
+    try screen_buffer.appendSlice("\x1b[0K");
+    try screen_buffer.appendSlice("\x1b[7m");
     // var status: [80]u8 = undefined;
     // var rstatus: [80]u8 = undefined;
     // var len = snprintf(status, sizeof(status), "%.20s - %d lines %s", self.filename, self.numrows); //, self.dirty ? "(modified)" : "");
@@ -296,10 +296,10 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     //         len += 1;
     //     }
     // }
-    screen_buffer.appendSlice("\x1b[0m\r\n");
+    try screen_buffer.appendSlice("\x1b[0m\r\n");
 
     // Second row depends on self.statusmsg and the status message update time.
-    screen_buffer.appendSlice("\x1b[0K", 4);
+    try screen_buffer.appendSlice("\x1b[0K", 4);
     // var msglen = strlen(self.statusmsg);
     // if (msglen & &time(NULL) - self.statusmsg_time < 5)
     //     screen_buffer.appendSlice(self.statusmsg); //, msglen <= self.screencols ? msglen : self.screencols);
@@ -324,7 +324,7 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     // }
     // snprintf(buf, sizeof(buf), "\x1b[%d;%dH", self.cy + 1, cx);
     // screen_buffer.appendSlice(buf);
-    screen_buffer.appendSlice("\x1b[?25h"); // Show cursor.
+    try screen_buffer.appendSlice("\x1b[?25h"); // Show cursor.
     try stdio.write(screen_buffer);
 }
 
@@ -614,7 +614,7 @@ pub fn editorOpen(self: *Self, filename: []u8) !void {
 
     while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| {
         const row = try EditorRow.new(line, self.syntax, self.allocator);
-        try self.rows.append(self.allocator, row);
+        try self.rows.append(row);
     } else |e| {
         return e;
     }
