@@ -1,22 +1,20 @@
 const std = @import("std");
 const File = std.fs.File;
 
-pub const Key = enum(u32) {
-    KEY_NULL = 0, // NULL
-    CTRL_C = 3, // Ctrl-c
-    CTRL_D = 4, // Ctrl-d
-    CTRL_F = 6, // Ctrl-f
-    CTRL_H = 8, // Ctrl-h
-    TAB = 9, // Tab
-    CTRL_L = 12, // Ctrl+l
-    ENTER = 13, // Enter
-    CTRL_Q = 17, // Ctrl-q
-    CTRL_S = 19, // Ctrl-s
-    CTRL_U = 21, // Ctrl-u
-    ESC = 27, // Escape
-    BACKSPACE = 127, // Backspace
-    // The following are just soft codes, not really reported by the terminal directly.
-    ARROW_LEFT = 1000,
+pub const KeyEnum = enum {
+    CTRL_C,
+    CTRL_D,
+    CTRL_F,
+    CTRL_H,
+    TAB,
+    CTRL_L,
+    ENTER,
+    CTRL_Q,
+    CTRL_S,
+    CTRL_U,
+    ESC,
+    BACKSPACE,
+    ARROW_LEFT,
     ARROW_RIGHT,
     ARROW_UP,
     ARROW_DOWN,
@@ -25,70 +23,84 @@ pub const Key = enum(u32) {
     END_KEY,
     PAGE_UP,
     PAGE_DOWN,
-    _
+    Key,
+};
+
+pub const Key = union(KeyEnum) {
+    CTRL_C: void,
+    CTRL_D: void,
+    CTRL_F: void,
+    CTRL_H: void,
+    TAB: void,
+    CTRL_L: void,
+    ENTER: void,
+    CTRL_Q: void,
+    CTRL_S: void,
+    CTRL_U: void,
+    ESC: void,
+    BACKSPACE: void,
+    ARROW_LEFT: void,
+    ARROW_RIGHT: void,
+    ARROW_UP: void,
+    ARROW_DOWN: void,
+    DEL_KEY: void,
+    HOME_KEY: void,
+    END_KEY: void,
+    PAGE_UP: void,
+    PAGE_DOWN: void,
+    Key: u8,
+};
+
+const KeyCodes = enum(u32) {
+    CTRL_C = @bitCast(u32, [_]u8{ 3, 170, 170, 170 }), // Ctrl-c
+    CTRL_D = @bitCast(u32, [_]u8{ 4, 170, 170, 170 }), // Ctrl-d
+    CTRL_F = @bitCast(u32, [_]u8{ 6, 170, 170, 170 }), // Ctrl-f
+    CTRL_H = @bitCast(u32, [_]u8{ 8, 170, 170, 170 }), // Ctrl-h
+    TAB = @bitCast(u32, [_]u8{ 9, 170, 170, 170 }), // Tab
+    CTRL_L = @bitCast(u32, [_]u8{ 12, 170, 170, 170 }), // Ctrl+l
+    ENTER = @bitCast(u32, [_]u8{ 13, 170, 170, 170 }), // Enter
+    CTRL_Q = @bitCast(u32, [_]u8{ 17, 170, 170, 170 }), // Ctrl-q
+    CTRL_S = @bitCast(u32, [_]u8{ 19, 170, 170, 170 }), // Ctrl-s
+    CTRL_U = @bitCast(u32, [_]u8{ 21, 170, 170, 170 }), // Ctrl-u
+    ESC = @bitCast(u32, [_]u8{ 27, 170, 170, 170 }), // Escape
+    BACKSPACE = @bitCast(u32, [_]u8{ 127, 170, 170, 170 }), // Backspace
+
+    ARROW_LEFT = @bitCast(u32, [_]u8{ 27, 91, 68, 170 }),
+    ARROW_RIGHT = @bitCast(u32, [_]u8{ 27, 91, 67, 170 }),
+    ARROW_UP = @bitCast(u32, [_]u8{ 27, 91, 65, 170 }),
+    ARROW_DOWN = @bitCast(u32, [_]u8{ 27, 91, 66, 170 }),
+    DEL_KEY = @bitCast(u32, [_]u8{ 27, 91, 51, 126 }),
+    PAGE_UP = @bitCast(u32, [_]u8{ 27, 91, 53, 126 }),
+    PAGE_DOWN = @bitCast(u32, [_]u8{ 27, 91, 54, 126 }),
+    _,
 };
 
 // Read a key from the terminal put in raw mode, trying to handle escape sequences.
 pub fn readKey(in: File) anyerror!Key {
-    var c: [1]u8 = undefined;
-    var nread = try in.read(&c);
-    while (nread == 0) : (nread = try in.read(&c)) {}
-
-    var key = @intToEnum(Key, c[0]);
-    if (key == .ESC) {
-        // escape sequence
-        var seq: [3]u8 = undefined;
-        // If this is just an ESC, we'll timeout here.
-        nread = try in.read(seq[0..1]);
-        if (nread == 0) {
-            return .ESC;
-        }
-        nread = try in.read(seq[1..2]);
-        if (nread == 0) {
-            return .ESC;
-        }
-        // ESC [ sequences.
-        if (seq[0] == '[') {
-            if (seq[1] >= '0' and seq[1] <= '9') {
-                // Extended escape, read additional byte.
-                nread = try in.read(seq[2..3]);
-                if (nread == 0) {
-                    return .ESC;
-                }
-                if (seq[2] == '~') {
-                    switch (seq[1]) {
-                        '3' => return .DEL_KEY,
-                        '5' => return .PAGE_UP,
-                        '6' => return .PAGE_DOWN,
-                        else => {
-                            std.log.err("read strange sequence: {s}", .{seq});
-                            std.process.exit(1);
-                        },
-                    }
-                }
-            } else {
-                switch (seq[1]) {
-                    'A' => return .ARROW_UP,
-                    'B' => return .ARROW_DOWN,
-                    'C' => return .ARROW_RIGHT,
-                    'D' => return .ARROW_LEFT,
-                    'H' => return .HOME_KEY,
-                    'F' => return .END_KEY,
-                    else => {
-                        std.log.err("read strange sequence: {s}", .{seq});
-                        std.process.exit(1);
-                    },
-                }
-            }
-        }
-        // ESC O sequences.
-        else if (seq[0] == 'O') {
-            switch (seq[1]) {
-                'H' => return .HOME_KEY,
-                'F' => return .END_KEY,
-                else => std.process.exit(1),
-            }
-        }
-    }
-    return key;
+    var code: [4]u8 = undefined;
+    var nread = try in.read(&code);
+    while (nread == 0) : (nread = try in.read(&code)) {}
+    const key_code = @bitCast(u32, code);
+    return switch (@intToEnum(KeyCodes, key_code)) {
+        .CTRL_C => Key.CTRL_C,
+        .CTRL_D => Key.CTRL_D,
+        .CTRL_F => Key.CTRL_F,
+        .CTRL_H => Key.CTRL_H,
+        .TAB => Key.TAB,
+        .CTRL_L => Key.CTRL_L,
+        .ENTER => Key.ENTER,
+        .CTRL_Q => Key.CTRL_Q,
+        .CTRL_S => Key.CTRL_S,
+        .CTRL_U => Key.CTRL_U,
+        .ESC => Key.ESC,
+        .BACKSPACE => Key.BACKSPACE,
+        .ARROW_LEFT => Key.ARROW_LEFT,
+        .ARROW_RIGHT => Key.ARROW_RIGHT,
+        .ARROW_UP => Key.ARROW_UP,
+        .ARROW_DOWN => Key.ARROW_DOWN,
+        .DEL_KEY => Key.DEL_KEY,
+        .PAGE_UP => Key.PAGE_UP,
+        .PAGE_DOWN => Key.PAGE_DOWN,
+        _ => Key { .Key = (code[0]) },
+    };
 }

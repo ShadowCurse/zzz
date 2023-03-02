@@ -61,7 +61,7 @@ pub const HLDB = [_]EditorSyntax{
 };
 
 // Maps syntax highlight token types to terminal colors.
-fn syntaxToColor(hl: i32) i32 {
+pub fn syntaxToColor(hl: i32) i32 {
     switch (hl) {
         HL_COMMENT, HL_MLCOMMENT => return 36, // cyan
         HL_KEYWORD1 => return 33, // yellow

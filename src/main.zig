@@ -51,9 +51,9 @@ fn enableRawMode(stdin: File) anyerror!Termios {
     return orig_termios;
 }
 
-fn disableRawMode(orig_termios: *Termios, stdin: File) anyerror!void {
+fn disableRawMode(orig_termios: Termios, stdin: File) anyerror!void {
     std.log.info("disableRawMode", .{});
-    try std.os.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, orig_termios.*);
+    try std.os.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, orig_termios);
 }
 // Use the ESC [6n escape sequence to query the horizontal cursor position and return it.
 // On error -1 is returned, on success the position of the cursor is stored at *rows and *cols and 0 is returned.
@@ -178,16 +178,7 @@ pub fn main() anyerror!void {
         std.process.exit(1);
     }
 
-    // var row = try Row.EditorRow.init(null, allocator);
-    // defer row.deinit();
-    //
-    // var c = row.hasOpenComment();
-    // std.log.info("C: {}", .{c});
-    //
     var editor = try Editor.new(allocator);
-
-    // TODO
-    // editor.updateSize(1, 1);
 
     // TODO
     // signal(SIGWINCH, handleSigWinCh);
@@ -195,24 +186,21 @@ pub fn main() anyerror!void {
     editor.selectSyntaxHighlight(args[1]);
     try editor.editorOpen(args[1]);
 
-    var orig_termios = try enableRawMode(std.io.getStdIn());
-    //
-    // var key = try Key.readKey(std.io.getStdIn());
-    // std.log.info("Read: {}", .{key});
-    //
-    // var pos = try getCursorPosition(std.io.getStdIn(), std.io.getStdOut());
-    // std.log.info("Cursor pos: {}", .{pos});
-    //
-    // var size = try getWindowSize(std.io.getStdIn(), std.io.getStdOut());
-    // std.log.info("Window size: {}", .{size});
-    //
+    const orig_termios = try enableRawMode(std.io.getStdIn());
+
+    // const in = std.io.getStdIn();
+    // while (true) {
+    //     const key = try Key.readKey(in);
+    //     std.debug.print("read: {}\n", .{key});
+    //     if (key == Key.Key.ESC) {
+    //         break;
+    //     }
+    // }
 
     while (true) {
         try editor.refreshScreen(std.io.getStdIn());
         var key = try Key.readKey(std.io.getStdIn());
         editor.processKeypress(key);
     }
-    try disableRawMode(&orig_termios, std.io.getStdIn());
-
-    // editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
+    try disableRawMode(orig_termios, std.io.getStdIn());
 }
