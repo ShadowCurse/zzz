@@ -205,7 +205,7 @@ pub const EditorRow = struct {
             // Handle keywords and lib calls
             if (word_start) {
                 // var j2: usize = 0;
-                for (keywords) |_, j| {
+                for (0..keywords.len) |j| {
                     // j2 = j;
                     var klen = keywords[j].len;
                     var kw2 = keywords[j][klen - 1] == '|';

@@ -68,20 +68,12 @@ pub fn selectSyntaxHighlight(self: *Self, filename: []u8) void {
 fn insertChar(self: *Self, c: u8) void {
     var filerow = self.rowoff + self.cy;
     var filecol = self.coloff + self.cx;
-    var row = null;
-    if (filerow >= self.numrows) {
-        row = null;
-    } else {
-        row = &self.row[filerow];
-    }
-
     // If the row where the cursor is currently located does not exist in our
     // logical representaion of the file, add enough empty rows as needed.
-    if (!row) {
-        while (self.rows.len <= filerow)
-            self.insertRow(self.numrows, "");
+    while (self.rows.items.len <= filerow) {
+        self.insertRow(self.rows.items.len, "");
     }
-    row = &self.row[filerow];
+    const row = &self.rows.items[filerow];
     row.insertChar(filecol, c);
     if (self.cx == self.screencols - 1) {
         self.coloff += 1;
@@ -136,18 +128,12 @@ fn delChar(self: *Self) void {
 // Inserting a newline is slightly complex as we have to handle inserting a
 // newline in the middle of a line, splitting the line as needed.
 fn insertNewline(self: *Self) void {
-    var filerow = self.rowoff + self.cy;
-    var filecol = self.coloff + self.cx;
-    var row = null;
-    if (filerow >= self.numrows) {
-        row = null;
-    } else {
-        row = &self.row[filerow];
-    }
+    const filerow = self.rowoff + self.cy;
+    const filecol = self.coloff + self.cx;
 
-    if (!row) {
-        if (filerow == self.numrows) {
-            self.insertRow(filerow, "", 0);
+    if (filerow >= self.rows.items.len) {
+        if (filerow == self.rows.items.len) {
+            self.insertRow(filerow, "");
             if (self.cy == self.screenrows - 1) {
                 self.rowoff += 1;
             } else {
@@ -158,15 +144,17 @@ fn insertNewline(self: *Self) void {
         }
         return;
     }
+
+    var row = &self.rows.items[filerow];
     // If the cursor is over the current line size, we want to conceptually
     // think it's just over the last character.
     if (filecol >= row.size) filecol = row.size;
     if (filecol == 0) {
-        self.insertRow(filerow, "", 0);
+        self.insertRow(filerow, "");
     } else {
         // We are in the middle of a line. Split it between two rows.
-        self.insertRow(filerow + 1, row.chars + filecol, row.size - filecol);
-        row = &self.row[filerow];
+        self.insertRow(filerow + 1, row.chars[filecol..]);
+        row = &self.rows.items[filerow];
         // row.chars[filecol] = '\0';
         row.size = filecol;
         row.updateRow();
@@ -182,13 +170,13 @@ fn insertNewline(self: *Self) void {
 
 // Insert a row at the specified position, shifting the other rows on the bottom
 // if required.
-fn insertRow(self: *Self, at: i32, s: []u8) void {
+fn insertRow(self: *Self, at: u32, s: []u8) void {
     if (at > self.rows.len)
         return;
     self.rows = self.allocator.realloc(self.rows, self.numrows + 1);
     if (at != self.rows.len) {
         std.mem.copy(u8, self.rows[at + 1 ..], self.rows[at..]);
-        for (self.rows[at + 1 ..]) |row| {
+        for (self.rows.items[at + 1 ..]) |row| {
             row.idx += 1;
         }
     }
@@ -213,7 +201,7 @@ fn delRow(self: *Self, at: i32) void {
     var row = &self.rows[at];
     row.deinit();
     std.mem.copy(self.rows[at .. self.rows.len - at - 1], self.rows[at + 1 .. self.rows.len - at - 1]);
-    for (self.rows[at..]) |r| {
+    for (self.rows.items[at..]) |r| {
         r.idx += 1;
     }
     self.dirty = true;
@@ -227,22 +215,23 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
 
     try screen_buffer.appendSlice("\x1b[?25l"); // Hide cursor
     try screen_buffer.appendSlice("\x1b[H"); // Go home
-    for (self.rows.items) |_, y| {
-        var filerow = self.rowoff + y;
-        if (filerow >= self.rows.len) {
-            try try screen_buffer.appendSlice("~\x1b[0K\r\n");
+    for (0..self.rows.items.len) |y| {
+        const filerow = self.rowoff + y;
+        if (filerow >= self.rows.items.len) {
+            try screen_buffer.appendSlice("~\x1b[0K\r\n");
             continue;
         }
 
-        var row = &self.rows[filerow];
-        var len = row.render.len - self.coloff;
-        var current_color = -1;
-        if (len > 0) {
-            if (len > self.screencols) len = self.screencols;
+        const row = &self.rows.items[filerow];
+        var remaining_line_width = row.render.len - self.coloff;
+        var current_color: i32 = -1;
+        if (remaining_line_width > 0) {
+            if (remaining_line_width > self.screencols) {
+                remaining_line_width = self.screencols;
+            }
             var chars = row.render[self.coloff..];
             var highlight = row.highlight[self.coloff..];
-            var j: u32 = 0;
-            while (j < len) : (j += 1) {
+            for (0..remaining_line_width) |j| {
                 if (highlight[j] == Syntax.HL_NONPRINT) {
                     var symbol: u8 = undefined;
                     try screen_buffer.appendSlice("\x1b[7m");
@@ -251,23 +240,21 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
                     } else {
                         symbol = '?';
                     }
-                    try screen_buffer.appendSlice(&symbol);
+                    try screen_buffer.appendNTimes(symbol, 1);
                     try screen_buffer.appendSlice("\x1b[0m");
                 } else if (highlight[j] == Syntax.HL_NORMAL) {
                     if (current_color != -1) {
                         try screen_buffer.appendSlice("\x1b[39m");
                         current_color = -1;
                     }
-                    try screen_buffer.appendSlice(chars[j]);
+                    try screen_buffer.appendNTimes(chars[j], 1);
                 } else {
-                    var color = Syntax.syntaxToColor(highlight[j]);
+                    const color = Syntax.syntaxToColor(highlight[j]);
                     if (color != current_color) {
                         var buf: [16]u8 = undefined;
-                        var fixed_allo = std.heap.FixedBufferAllocator.init(&buf);
-                        const alloc = fixed_allo.allocator();
-                        _ = try std.fmt.allocPrint(alloc, "\x1b[{d}m", .{color});
+                        _ = try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{color});
                         current_color = color;
-                        try screen_buffer.appendSlice(buf);
+                        try screen_buffer.appendSlice(&buf);
                     }
                     try screen_buffer.appendSlice(chars[j .. j + 1]);
                 }
@@ -299,7 +286,7 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     try screen_buffer.appendSlice("\x1b[0m\r\n");
 
     // Second row depends on self.statusmsg and the status message update time.
-    try screen_buffer.appendSlice("\x1b[0K", 4);
+    try screen_buffer.appendSlice("\x1b[0K");
     // var msglen = strlen(self.statusmsg);
     // if (msglen & &time(NULL) - self.statusmsg_time < 5)
     //     screen_buffer.appendSlice(self.statusmsg); //, msglen <= self.screencols ? msglen : self.screencols);
@@ -325,7 +312,7 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     // snprintf(buf, sizeof(buf), "\x1b[%d;%dH", self.cy + 1, cx);
     // screen_buffer.appendSlice(buf);
     try screen_buffer.appendSlice("\x1b[?25h"); // Show cursor.
-    try stdio.write(screen_buffer);
+    _ = try stdio.write(screen_buffer.items);
 }
 
 // fn find(self: *Self, fd: std.os.fd_t) void {
