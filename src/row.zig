@@ -100,6 +100,11 @@ pub const EditorRow = struct {
         self.updateRender();
     }
 
+    pub fn resize(self: *Self, size: u32) void {
+        _ = size;
+        _ = self;
+    }
+
     // Set every byte of self.hl (that corresponds to every character in the line)
     // to the right syntax highlight type (HL_* defines).
     pub fn updateSyntax(self: *Self, inside_comment: bool) !bool {
