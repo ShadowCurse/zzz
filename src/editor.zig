@@ -11,19 +11,30 @@ const EditorRow = Row.EditorRow;
 const EditorSyntax = Syntax.EditorSyntax;
 const HLDB = Syntax.HLDB;
 
-cx: u32, // Cursor x position in characters
-cy: u32, // Cursor y position in characters
-rowoff: u32, // Offset of row displayed.
-coloff: u32, // Offset of column displayed.
-screenrows: u32, // Number dkjfbnk;djfof rows that we can show
-screencols: u32, // Number of cols that we can show
-rawmode: bool, // Is terminal raw mode enabled?
-rows: Rows, // Rows
-dirty: bool, // File modified but not saved.
-filename: ?[]u8, // Currently open filename
+/// Cursor x position in characters
+cx: u32,
+/// Cursor y position in characters
+cy: u32,
+/// Offset of row displayed
+rowoff: u32,
+// Offset of column displayed
+coloff: u32,
+/// Number dkjfbnk;djfof rows that we can show
+screenrows: u32,
+/// Number of cols that we can show
+screencols: u32,
+/// Terminal raw mode
+rawmode: bool,
+/// Rows
+rows: Rows,
+/// File modified but not saved
+dirty: bool,
+/// Currently open filename
+filename: ?[]u8,
 statusmsg: [80]u8,
 statusmsg_time: u64,
-syntax: ?*const EditorSyntax, // Current syntax highlight, or NULL.
+/// Current syntax highlight
+syntax: ?*const EditorSyntax,
 allocator: Allocator,
 
 const Self = @This();
@@ -125,8 +136,8 @@ fn delChar(self: *Self) void {
     self.dirty = true;
 }
 
-// Inserting a newline is slightly complex as we have to handle inserting a
-// newline in the middle of a line, splitting the line as needed.
+/// Inserting a newline is slightly complex as we have to handle inserting a
+/// newline in the middle of a line, splitting the line as needed.
 fn insertNewline(self: *Self) void {
     const filerow = self.rowoff + self.cy;
     const filecol = self.coloff + self.cx;
@@ -134,31 +145,21 @@ fn insertNewline(self: *Self) void {
     if (filerow >= self.rows.items.len) {
         if (filerow == self.rows.items.len) {
             self.insertRow(filerow, "");
-            if (self.cy == self.screenrows - 1) {
-                self.rowoff += 1;
-            } else {
-                self.cy += 1;
-            }
-            self.cx = 0;
-            self.coloff = 0;
         }
-        return;
-    }
-
-    var row = &self.rows.items[filerow];
-    // If the cursor is over the current line size, we want to conceptually
-    // think it's just over the last character.
-    if (filecol >= row.size) filecol = row.size;
-    if (filecol == 0) {
-        self.insertRow(filerow, "");
     } else {
-        // We are in the middle of a line. Split it between two rows.
-        self.insertRow(filerow + 1, row.chars[filecol..]);
-        row = &self.rows.items[filerow];
-        // row.chars[filecol] = '\0';
-        row.size = filecol;
-        row.updateRow();
+        var row = &self.rows.items[filerow];
+        // If the cursor is over the current line size, we want to conceptually
+        // think it's just over the last character.
+        if (filecol >= row.chars.len) filecol = row.size;
+        if (filecol == 0) {
+            self.insertRow(filerow, "");
+        } else {
+            // We are in the middle of a line. Split it between two rows.
+            self.insertRow(filerow + 1, row.chars[filecol..]);
+            self.rows.items[filerow].resize(filecol);
+        }
     }
+    // fix cursor position
     if (self.cy == self.screenrows - 1) {
         self.rowoff += 1;
     } else {
@@ -168,28 +169,13 @@ fn insertNewline(self: *Self) void {
     self.coloff = 0;
 }
 
-// Insert a row at the specified position, shifting the other rows on the bottom
-// if required.
-fn insertRow(self: *Self, at: u32, s: []u8) void {
+/// Insert a row at the specified position, shifting the other rows on the bottom
+/// if required.
+fn insertRow(self: *Self, at: u32, s: []u8) !void {
     if (at > self.rows.len)
         return;
-    self.rows = self.allocator.realloc(self.rows, self.numrows + 1);
-    if (at != self.rows.len) {
-        std.mem.copy(u8, self.rows[at + 1 ..], self.rows[at..]);
-        for (self.rows.items[at + 1 ..]) |row| {
-            row.idx += 1;
-        }
-    }
-    self.rows[at].init(s, self.allocator);
-
-    // self.rows[at].size = len;
-    // self.rows[at].chars = allocator.alloc(u8, len + 1);
-    // std.mem.copy(u8, self.rows[at].chars[0 .. len + 1], s[0 .. len + 1]);
-    // self.rows[at].hl = null;
-    // self.rows[at].hl_oc = false;
-    // self.rows[at].render = null;
-    // self.rows[at].rsize = 0;
-    // self.rows[at].idx = at;
+    const new_row = EditorRow.new(s, self.syntax, self.allocator);
+    try self.rows.insert(at, new_row);
     self.rows[at].uptade();
     self.dirty = true;
 }
@@ -197,12 +183,14 @@ fn insertRow(self: *Self, at: u32, s: []u8) void {
 // Remove the row at the specified position, shifting the remainign on the
 // top.
 fn delRow(self: *Self, at: i32) void {
-    if (at >= self.rows.len) return;
-    var row = &self.rows[at];
+    if (at >= self.rows.len) 
+      return;
+
+    const row = self.rows.orderedRemove(at);
     row.deinit();
-    std.mem.copy(self.rows[at .. self.rows.len - at - 1], self.rows[at + 1 .. self.rows.len - at - 1]);
+
     for (self.rows.items[at..]) |r| {
-        r.idx += 1;
+        r.idx -= 1;
     }
     self.dirty = true;
 }
