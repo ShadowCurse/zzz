@@ -86,6 +86,7 @@ fn insertChar(self: *Self, c: u8) void {
     }
     const row = &self.rows.items[filerow];
     row.insertChar(filecol, c);
+    // fix cursor
     if (self.cx == self.screencols - 1) {
         self.coloff += 1;
     } else {
@@ -98,21 +99,20 @@ fn insertChar(self: *Self, c: u8) void {
 fn delChar(self: *Self) void {
     var filerow = self.rowoff + self.cy;
     var filecol = self.coloff + self.cx;
-    var row = null;
-    if (filerow >= self.numrows) {
-        row = null;
-    } else {
-        row = &self.row[filerow];
+
+    if (filerow >= self.rows.items.len or (filecol == 0 and filerow == 0)) {
+        return;
     }
 
-    if (!row or (filecol == 0 and filerow == 0)) return;
+    const row = &self.rows.items[filerow];
+
     if (filecol == 0) {
         // Handle the case of column 0, we need to move the current line
         // on the right of the previous one.
-        filecol = self.rows[filerow - 1].size;
-        self.row[filerow - 1].appendString(row.chars, row.size);
-        self.delRow(filerow);
-        row = null;
+        self.rows.items[filerow - 1].appendSlice(row.chars.items);
+        const delited_row = self.rows.orderedRemove(filerow);
+        delited_row.deinit();
+
         if (self.cy == 0) {
             self.rowoff -= 1;
         } else {
@@ -125,14 +125,13 @@ fn delChar(self: *Self) void {
             self.coloff += shift;
         }
     } else {
-        row.delChar(filecol - 1);
+        row.deleteChar(filecol - 1);
         if (self.cx == 0 & &self.coloff) {
             self.coloff -= 1;
         } else {
             self.cx -= 1;
         }
     }
-    if (row) row.editorUpdateRow();
     self.dirty = true;
 }
 
@@ -144,7 +143,7 @@ fn insertNewline(self: *Self) void {
 
     if (filerow >= self.rows.items.len) {
         if (filerow == self.rows.items.len) {
-            self.insertRow(filerow, "");
+            try self.insertRow(filerow, "");
         }
     } else {
         var row = &self.rows.items[filerow];
@@ -152,10 +151,10 @@ fn insertNewline(self: *Self) void {
         // think it's just over the last character.
         if (filecol >= row.chars.len) filecol = row.size;
         if (filecol == 0) {
-            self.insertRow(filerow, "");
+            try self.insertRow(filerow, "");
         } else {
             // We are in the middle of a line. Split it between two rows.
-            self.insertRow(filerow + 1, row.chars[filecol..]);
+            try self.insertRow(filerow + 1, row.chars[filecol..]);
             self.rows.items[filerow].resize(filecol);
         }
     }
@@ -171,27 +170,33 @@ fn insertNewline(self: *Self) void {
 
 /// Insert a row at the specified position, shifting the other rows on the bottom
 /// if required.
-fn insertRow(self: *Self, at: u32, s: []u8) !void {
-    if (at > self.rows.len)
+fn insertRow(self: *Self, at: usize, str: []u8) !void {
+    if (at > self.rows.items.len)
         return;
-    const new_row = EditorRow.new(s, self.syntax, self.allocator);
+
+    const new_row = try EditorRow.new(str, at, self.syntax, self.allocator);
     try self.rows.insert(at, new_row);
-    self.rows[at].uptade();
+
+    for (self.rows.items[at + 1 ..]) |r| {
+        r.file_index += 1;
+    }
+
     self.dirty = true;
 }
 
 // Remove the row at the specified position, shifting the remainign on the
 // top.
 fn delRow(self: *Self, at: i32) void {
-    if (at >= self.rows.len) 
-      return;
+    if (at >= self.rows.len)
+        return;
 
     const row = self.rows.orderedRemove(at);
     row.deinit();
 
     for (self.rows.items[at..]) |r| {
-        r.idx -= 1;
+        r.file_index -= 1;
     }
+
     self.dirty = true;
 }
 
@@ -211,14 +216,14 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
         }
 
         const row = &self.rows.items[filerow];
-        var remaining_line_width = row.render.len - self.coloff;
+        var remaining_line_width = row.render.items.len - self.coloff;
         var current_color: i32 = -1;
         if (remaining_line_width > 0) {
             if (remaining_line_width > self.screencols) {
                 remaining_line_width = self.screencols;
             }
-            var chars = row.render[self.coloff..];
-            var highlight = row.highlight[self.coloff..];
+            var chars = row.render.items[self.coloff..];
+            var highlight = row.highlight.items[self.coloff..];
             for (0..remaining_line_width) |j| {
                 if (highlight[j] == Syntax.HL_NONPRINT) {
                     var symbol: u8 = undefined;
@@ -587,8 +592,9 @@ pub fn editorOpen(self: *Self, filename: []u8) !void {
     var buf_reader = std.io.bufferedReader(file.reader());
     var in_stream = buf_reader.reader();
 
-    while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| {
-        const row = try EditorRow.new(line, self.syntax, self.allocator);
+    var index: usize = 0;
+    while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| : (index += 1) {
+        const row = try EditorRow.new(line, index, self.syntax, self.allocator);
         try self.rows.append(row);
     } else |e| {
         return e;
