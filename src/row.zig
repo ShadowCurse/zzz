@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const String = std.ArrayListUnmanaged(u8);
+const String = std.ArrayList(u8);
 
 const ctype = @cImport({
     // See https://github.com/ziglang/zig/issues/515
@@ -18,27 +18,27 @@ fn isSeparator(c: u8) bool {
     return c == 0 or ctype.isspace(c) != 0 or ctype.strchr(",.()+-/*=~%[];", c) != 0;
 }
 
-// This structure represents a single line of the file we are editing.
+/// This structure represents a single line of the file we are editing.
 pub const EditorRow = struct {
-    idx: u32, // row index in the file, zero-based.
-    chars: []u8, // row raw content.
-    highlight: []u8, // syntax highlight type for each character in render
-    render: []u8, // row content "rendered" for screen (for TABs).
-    // hl_oc: bool, // row had open comment at end in last syntax highlight check.
+    /// Index in the file
+    file_index: usize,
+    /// Row raw content
+    chars: String,
+    /// Syntax highlight for each character in render
+    highlight: String,
+    /// Row content "rendered" for screen (with TABs)
+    render: String,
     syntax: ?*const EditorSyntax,
     allocator: Allocator,
 
     const Self = @This();
 
-    pub fn new(str: []u8, syntax: ?*const EditorSyntax, allocator: Allocator) !Self {
-        var highlight = try allocator.alloc(u8, 0);
-        var render = try allocator.alloc(u8, 0);
+    pub fn new(str: []u8, file_index: usize, syntax: ?*const EditorSyntax, allocator: Allocator) !Self {
         var self = Self{
-            .idx = 0,
-            .chars = str,
-            .highlight = highlight,
-            .render = render,
-            // .hl_oc = false,
+            .file_index = file_index,
+            .chars = String.fromOwnedSlice(allocator, str),
+            .highlight = String.init(allocator),
+            .render = String.init(allocator),
             .syntax = syntax,
             .allocator = allocator,
         };
@@ -48,141 +48,131 @@ pub const EditorRow = struct {
 
     // Free self's heap allocated stuff.
     pub fn deinit(self: *Self) void {
-        self.allocator.free(self.chars);
-        self.allocator.free(self.highlight);
-        self.allocator.free(self.render);
+        self.chars.deinit();
+        self.highlight.deinit();
+        self.render.deinit();
     }
 
     // Return true if the specified row last char is part of a multi line comment
     // that starts at this self or at one before, and does not end at the end
     // of the self but spawns to the next self.
     pub fn hasOpenComment(self: *Self) bool {
-        if (self.render.len != 0 and self.highlight[self.render.len - 1] == Syntax.HL_MLCOMMENT and
-            (self.render.len < 2 or (self.render[self.render.len - 2] != '*' or
-            self.render[self.render.len - 1] != '/'))) return true;
+        if (self.render.items.len != 0 and self.highlight.items[self.render.items.len - 1] == Syntax.HL_MLCOMMENT and
+            (self.render.items.len < 2 or (self.render.items[self.render.items.len - 2] != '*' or
+            self.render.items[self.render.items.len - 1] != '/'))) return true;
         return false;
     }
 
-    // Insert a character at the specified position in a self, moving the remaining
+    // Insert a character at the specified position in a row, moving the remaining
     // chars on the right if needed.
-    pub fn insertChar(self: *Self, at: u32, c: u8) void {
+    pub fn insertChar(self: *Self, at: usize, c: u8) !void {
         if (self.size < at) {
             // Pad the string with spaces if the insert location is outside the
             // current length by more than a single character.
-            var padding = at - self.chars.len;
-            // In the next line +1 means: new char.
-            self.chars = self.allocator.realloc(self.chars, self.chars.len + padding + 1);
-            std.mem.set(self.chars[self.chars.len .. self.chars.len + padding], ' ');
-            // TODO
-            // self.chars[self.chars.len + padlen + 1] = 0;
-            // self.size += padlen + 1;
+            const padding = at - self.chars.items.len;
+            try self.chars.appendNTimes(' ', padding);
+            try self.chars.append(c);
         } else {
-            // If we are in the middle of the string just make space for 1 new
-            // char plus the (already existing) null term.
-            self.chars = self.allocator.realloc(self.chars, self.chars.len + 1);
-            std.mem.copy(self.chars[at + 1 .. self.chars.len], self.chars[at .. self.chars.len - 1]);
+            try self.chars.insert(at, c);
         }
-        self.chars[at] = c;
-        self.updateRender();
+        try self.updateRender();
     }
 
     // Delete the character at offset 'at' from the specified self.
-    pub fn deleteChar(self: *Self, at: u32) void {
+    pub fn deleteChar(self: *Self, at: usize) void {
         if (self.size <= at) return;
-        std.mem.copy(self.chars[at .. self.chars.len - 1], self.chars[at + 1 .. self.chars.len]);
+        try self.chars.orderedRemove(at);
         self.updateRender();
     }
 
     // Append the string 's' at the end of a self
-    pub fn appendString(self: *Self, s: *String) void {
-        self.chars = self.allocator.realloc(self.chars, self.chars.len + s.items.len);
-        std.mem.copy(self.chars[self.chars.len - s.items.len .. self.chars.len], s.items);
-        self.updateRender();
+    pub fn appendSlice(self: *Self, str: []u8) void {
+        try self.chars.appendSlice(str);
+        try self.updateRender();
     }
 
-    pub fn resize(self: *Self, size: u32) void {
-        _ = size;
-        _ = self;
+    pub fn resize(self: *Self, size: usize) !void {
+        try self.chars.resize(size);
+        try self.updateRender();
     }
 
     // Set every byte of self.hl (that corresponds to every character in the line)
     // to the right syntax highlight type (HL_* defines).
-    pub fn updateSyntax(self: *Self, inside_comment: bool) !bool {
-        // TODO why can't we modify input parameter
-        var in_comment = inside_comment;
-
-        self.highlight = try self.allocator.realloc(self.highlight, self.render.len);
-        std.mem.set(u8, self.highlight, Syntax.HL_NORMAL);
+    pub fn updateSyntax(self: *Self) !void {
+        // reset all syntax to normal
+        try self.highlight.resize(self.render.items.len);
+        std.mem.set(u8, self.highlight.items, Syntax.HL_NORMAL);
 
         if (self.syntax == null) {
-            return false;
+            return;
         }
+
         const syntax = self.syntax.?;
         const keywords = syntax.keywords;
         const scs = syntax.singleline_comment_start;
-        const mcs = syntax.multiline_comment_start;
-        const mce = syntax.multiline_comment_end;
+        // const mcs = syntax.multiline_comment_start;
+        // const mce = syntax.multiline_comment_end;
 
         // Point to the first non-space char.
         var i: usize = 0;
-        while (ctype.isspace(self.render[i]) == 0) : (i += 1) {}
+        while (ctype.isspace(self.render.items[i]) == 0) : (i += 1) {}
 
         var word_start = true; // Tell the parser if 'i' points to start of word.
-        var in_string: ?*u8 = null; // Are we inside "" or '' ?
+        var in_string: ?u8 = null; // Are we inside "" or '' ?
 
         // If the previous line has an open comment, this line starts
         // with an open comment state.
 
-        outer: while (i < self.render.len) {
+        outer: while (i < self.render.items.len) {
             // Handle // comments.
-            if (word_start and &self.render[i .. i + 2] == &scs) {
+            if (word_start and &self.render.items[i .. i + 2] == &scs) {
                 // From here to end is a comment
-                std.mem.set(u8, self.highlight[i..self.highlight.len], Syntax.HL_COMMENT);
-                return false;
+                std.mem.set(u8, self.highlight.items[i..self.highlight.items.len], Syntax.HL_COMMENT);
+                return;
             }
 
             // Handle multi line comments.
-            if (in_comment) {
-                self.highlight[i] = Syntax.HL_MLCOMMENT;
-                if (&self.render[i .. i + 2] == &mce) {
-                    self.highlight[i + 1] = Syntax.HL_MLCOMMENT;
-                    in_comment = false;
-                    word_start = true;
-                    i += 2;
-                    continue;
-                } else {
-                    word_start = false;
-                    i += 1;
-                    continue;
-                }
-            } else if (&self.render[i .. i + 2] == &mcs) {
-                self.highlight[i] = Syntax.HL_MLCOMMENT;
-                self.highlight[i + 1] = Syntax.HL_MLCOMMENT;
-                in_comment = true;
-                word_start = false;
-                i += 2;
-                continue;
-            }
+            // if (in_comment) {
+            //     self.highlight.items[i] = Syntax.HL_MLCOMMENT;
+            //     if (&self.render.items[i .. i + 2] == &mce) {
+            //         self.highlight.items[i + 1] = Syntax.HL_MLCOMMENT;
+            //         in_comment = false;
+            //         word_start = true;
+            //         i += 2;
+            //         continue;
+            //     } else {
+            //         word_start = false;
+            //         i += 1;
+            //         continue;
+            //     }
+            // } else if (&self.render.items[i .. i + 2] == &mcs) {
+            //     self.highlight.items[i] = Syntax.HL_MLCOMMENT;
+            //     self.highlight.items[i + 1] = Syntax.HL_MLCOMMENT;
+            //     in_comment = true;
+            //     word_start = false;
+            //     i += 2;
+            //     continue;
+            // }
 
             // Handle "" and ''
             if (in_string != null) {
-                self.highlight[i] = Syntax.HL_STRING;
-                if (self.render[i] == '\\') {
-                    self.highlight[i + 1] = Syntax.HL_STRING;
+                self.highlight.items[i] = Syntax.HL_STRING;
+                if (self.render.items[i] == '\\') {
+                    self.highlight.items[i + 1] = Syntax.HL_STRING;
                     word_start = false;
                     i += 2;
                     continue;
                 }
                 // if current char is end of string (" or ')
-                if (self.render[i] == in_string.?.*) {
+                if (self.render.items[i] == in_string.?) {
                     in_string = null;
                 }
                 i += 1;
                 continue;
             } else {
-                if (self.render[i] == '"' or self.render[i] == '\'') {
-                    in_string = &self.render[i];
-                    self.highlight[i] = Syntax.HL_STRING;
+                if (self.render.items[i] == '\"' or self.render.items[i] == '\'') {
+                    in_string = self.render.items[i];
+                    self.highlight.items[i] = Syntax.HL_STRING;
                     word_start = false;
                     i += 1;
                     continue;
@@ -190,18 +180,18 @@ pub const EditorRow = struct {
             }
 
             // Handle non printable chars.
-            if (ctype.isprint(self.render[i]) == 0) {
-                self.highlight[i] = Syntax.HL_NONPRINT;
+            if (ctype.isprint(self.render.items[i]) == 0) {
+                self.highlight.items[i] = Syntax.HL_NONPRINT;
                 word_start = false;
                 i += 1;
                 continue;
             }
 
             // Handle numbers
-            if ((ctype.isdigit(self.render[i]) != 0 and (word_start or self.highlight[i - 1] == Syntax.HL_NUMBER)) or
-                (self.render[i] == '.' and 0 < i and self.highlight[i - 1] == Syntax.HL_NUMBER))
+            if ((ctype.isdigit(self.render.items[i]) != 0 and (word_start or self.highlight.items[i - 1] == Syntax.HL_NUMBER)) or
+                (self.render.items[i] == '.' and 0 < i and self.highlight.items[i - 1] == Syntax.HL_NUMBER))
             {
-                self.highlight[i] = Syntax.HL_NUMBER;
+                self.highlight.items[i] = Syntax.HL_NUMBER;
                 word_start = false;
                 i += 1;
                 continue;
@@ -209,21 +199,19 @@ pub const EditorRow = struct {
 
             // Handle keywords and lib calls
             if (word_start) {
-                // var j2: usize = 0;
                 for (0..keywords.len) |j| {
-                    // j2 = j;
                     var klen = keywords[j].len;
                     var kw2 = keywords[j][klen - 1] == '|';
                     if (kw2) klen -= 1;
 
                     // if there is a keyword and there is separator after it
-                    if (&self.render[i .. i + klen] == &keywords[j] and isSeparator(self.render[i + klen])) {
+                    if (&self.render.items[i .. i + klen] == &keywords[j] and isSeparator(self.render.items[i + klen])) {
                         var kw: u8 = Syntax.HL_KEYWORD1;
                         if (!kw2) {
                             kw = Syntax.HL_KEYWORD2;
                         }
                         // Keyword
-                        std.mem.set(u8, self.highlight[i .. i + klen], kw);
+                        std.mem.set(u8, self.highlight.items[i .. i + klen], kw);
                         i += klen;
                         word_start = false;
                         continue :outer;
@@ -232,15 +220,10 @@ pub const EditorRow = struct {
             }
 
             // Not special chars
-            word_start = isSeparator(self.render[i]);
+            word_start = isSeparator(self.render.items[i]);
             i += 1;
         }
-
-        // Propagate syntax change to the next self if the open comment
-        // state changed. This may recursively affect all the following selfs
-        // in the file.
-        var oc = self.hasOpenComment();
-        return oc;
+        return;
     }
 
     // Update the rendered version and the syntax highlight of a self.
@@ -248,30 +231,28 @@ pub const EditorRow = struct {
         // Create a version of the self we can directly print on the screen,
         // respecting tabs, substituting non printable characters with '?'.
         var tabs: u32 = 0;
-        for (self.chars) |c| {
+        for (self.chars.items) |c| {
             if (c == @enumToInt(Key.Key.TAB))
                 tabs += 1;
         }
 
-        const tab_size = 8;
+        const tab_size = 4;
 
-        self.allocator.free(self.render);
-        var allocsize = self.chars.len + tabs * 8; // + nonprint * 9 + 1;
-        self.render = try self.allocator.alloc(u8, allocsize);
+        var size = self.chars.items.len + tabs * tab_size;
+        try self.render.resize(size);
 
         var idx: u32 = 0;
-        for (self.chars) |c| {
+        for (self.chars.items) |c| {
             if (c == @enumToInt(Key.Key.TAB)) {
-                std.mem.set(u8, self.render[idx .. idx + tab_size], ' ');
+                std.mem.set(u8, self.render.items[idx .. idx + tab_size], ' ');
                 idx += tab_size;
             } else {
-                self.render[idx] = c;
+                self.render.items[idx] = c;
                 idx += 1;
             }
         }
 
         // Update the syntax highlighting attributes of the self.
-        // TODO use return value
-        _ = try self.updateSyntax(false);
+        try self.updateSyntax();
     }
 };
