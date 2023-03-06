@@ -66,7 +66,7 @@ pub const EditorRow = struct {
     // Insert a character at the specified position in a row, moving the remaining
     // chars on the right if needed.
     pub fn insertChar(self: *Self, at: usize, c: u8) !void {
-        if (self.size < at) {
+        if (self.chars.items.len < at) {
             // Pad the string with spaces if the insert location is outside the
             // current length by more than a single character.
             const padding = at - self.chars.items.len;
@@ -79,14 +79,14 @@ pub const EditorRow = struct {
     }
 
     // Delete the character at offset 'at' from the specified self.
-    pub fn deleteChar(self: *Self, at: usize) void {
-        if (self.size <= at) return;
-        try self.chars.orderedRemove(at);
-        self.updateRender();
+    pub fn deleteChar(self: *Self, at: usize) !void {
+        if (self.chars.items.len <= at) return;
+        _ = self.chars.orderedRemove(at);
+        try self.updateRender();
     }
 
     // Append the string 's' at the end of a self
-    pub fn appendSlice(self: *Self, str: []u8) void {
+    pub fn appendSlice(self: *Self, str: []u8) !void {
         try self.chars.appendSlice(str);
         try self.updateRender();
     }

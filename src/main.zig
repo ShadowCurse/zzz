@@ -179,12 +179,13 @@ pub fn main() anyerror!void {
     }
 
     var editor = try Editor.new(allocator);
+    defer editor.deinit();
 
     // TODO
     // signal(SIGWINCH, handleSigWinCh);
 
     editor.selectSyntaxHighlight(args[1]);
-    try editor.editorOpen(args[1]);
+    try editor.openFile(args[1]);
 
     const orig_termios = try enableRawMode(std.io.getStdIn());
 
@@ -197,10 +198,10 @@ pub fn main() anyerror!void {
     //     }
     // }
 
-    while (true) {
+    // while (true) {
         try editor.refreshScreen(std.io.getStdIn());
-        var key = try Key.readKey(std.io.getStdIn());
-        editor.processKeypress(key);
-    }
+    //     var key = try Key.readKey(std.io.getStdIn());
+    //     try editor.processKeypress(key);
+    // }
     try disableRawMode(orig_termios, std.io.getStdIn());
 }

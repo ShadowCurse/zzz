@@ -12,17 +12,17 @@ const EditorSyntax = Syntax.EditorSyntax;
 const HLDB = Syntax.HLDB;
 
 /// Cursor x position in characters
-cx: u32,
+cx: u64,
 /// Cursor y position in characters
-cy: u32,
+cy: u64,
 /// Offset of row displayed
-rowoff: u32,
+rowoff: u64,
 // Offset of column displayed
-coloff: u32,
+coloff: u64,
 /// Number dkjfbnk;djfof rows that we can show
-screenrows: u32,
+screenrows: u64,
 /// Number of cols that we can show
-screencols: u32,
+screencols: u64,
 /// Terminal raw mode
 rawmode: bool,
 /// Rows
@@ -58,7 +58,14 @@ pub fn new(allocator: Allocator) !Self {
     };
 }
 
-pub fn updateSize(self: *Self, rows: u32, cols: u32) void {
+pub fn deinit(self: *Self) void {
+    for (self.rows.items) |*r| {
+      r.*.deinit();
+    }
+    self.rows.deinit();
+  }
+
+pub fn updateSize(self: *Self, rows: u64, cols: u64) void {
     self.screenrows = rows;
     self.screencols = cols;
 }
@@ -76,16 +83,16 @@ pub fn selectSyntaxHighlight(self: *Self, filename: []u8) void {
 }
 
 // Insert the specified char at the current prompt position.
-fn insertChar(self: *Self, c: u8) void {
+fn insertChar(self: *Self, c: u8) !void {
     var filerow = self.rowoff + self.cy;
     var filecol = self.coloff + self.cx;
     // If the row where the cursor is currently located does not exist in our
     // logical representaion of the file, add enough empty rows as needed.
     while (self.rows.items.len <= filerow) {
-        self.insertRow(self.rows.items.len, "");
+        try self.insertRow(self.rows.items.len, "");
     }
     const row = &self.rows.items[filerow];
-    row.insertChar(filecol, c);
+    try row.insertChar(filecol, c);
     // fix cursor
     if (self.cx == self.screencols - 1) {
         self.coloff += 1;
@@ -96,7 +103,7 @@ fn insertChar(self: *Self, c: u8) void {
 }
 
 // Delete the char at the current prompt position.
-fn delChar(self: *Self) void {
+fn delChar(self: *Self) !void {
     var filerow = self.rowoff + self.cy;
     var filecol = self.coloff + self.cx;
 
@@ -109,8 +116,8 @@ fn delChar(self: *Self) void {
     if (filecol == 0) {
         // Handle the case of column 0, we need to move the current line
         // on the right of the previous one.
-        self.rows.items[filerow - 1].appendSlice(row.chars.items);
-        const delited_row = self.rows.orderedRemove(filerow);
+        try self.rows.items[filerow - 1].appendSlice(row.chars.items);
+        var delited_row = self.rows.orderedRemove(filerow);
         delited_row.deinit();
 
         if (self.cy == 0) {
@@ -125,8 +132,8 @@ fn delChar(self: *Self) void {
             self.coloff += shift;
         }
     } else {
-        row.deleteChar(filecol - 1);
-        if (self.cx == 0 & &self.coloff) {
+        try row.deleteChar(filecol - 1);
+        if (self.cx == 0 and self.coloff != 0) {
             self.coloff -= 1;
         } else {
             self.cx -= 1;
@@ -137,9 +144,9 @@ fn delChar(self: *Self) void {
 
 /// Inserting a newline is slightly complex as we have to handle inserting a
 /// newline in the middle of a line, splitting the line as needed.
-fn insertNewline(self: *Self) void {
+fn insertNewline(self: *Self) !void {
     const filerow = self.rowoff + self.cy;
-    const filecol = self.coloff + self.cx;
+    var filecol = self.coloff + self.cx;
 
     if (filerow >= self.rows.items.len) {
         if (filerow == self.rows.items.len) {
@@ -149,13 +156,13 @@ fn insertNewline(self: *Self) void {
         var row = &self.rows.items[filerow];
         // If the cursor is over the current line size, we want to conceptually
         // think it's just over the last character.
-        if (filecol >= row.chars.len) filecol = row.size;
+        if (filecol >= @as(u64, row.chars.items.len)) filecol = @as(u64, row.chars.items.len);
         if (filecol == 0) {
             try self.insertRow(filerow, "");
         } else {
             // We are in the middle of a line. Split it between two rows.
-            try self.insertRow(filerow + 1, row.chars[filecol..]);
-            self.rows.items[filerow].resize(filecol);
+            try self.insertRow(filerow + 1, row.chars.items[filecol..]);
+            try self.rows.items[filerow].resize(filecol);
         }
     }
     // fix cursor position
@@ -177,8 +184,8 @@ fn insertRow(self: *Self, at: usize, str: []u8) !void {
     const new_row = try EditorRow.new(str, at, self.syntax, self.allocator);
     try self.rows.insert(at, new_row);
 
-    for (self.rows.items[at + 1 ..]) |r| {
-        r.file_index += 1;
+    for (self.rows.items[at + 1 ..]) |*r| {
+        r.*.file_index += 1;
     }
 
     self.dirty = true;
@@ -421,14 +428,8 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
 
 // Handle cursor position change because arrow keys were pressed.
 fn moveCursor(self: *Self, key: Key.Key) void {
-    var cursor_row = self.rowoff + self.cy;
-    var cursor_col = self.coloff + self.cx;
-    var rowlen = 0;
-    var current_row = if (cursor_row >= self.rows.len) {
-        null;
-    } else {
-        &self.row[cursor_row];
-    };
+    var file_row = self.rowoff + self.cy;
+    var file_col = self.coloff + self.cx;
 
     switch (key) {
         .ARROW_LEFT => {
@@ -440,9 +441,9 @@ fn moveCursor(self: *Self, key: Key.Key) void {
                 } else {
                     // if there is a row above we set cursor to the ends
                     // of that row
-                    if (cursor_row > 0) {
+                    if (file_row > 0) {
                         self.cy -= 1;
-                        self.cx = self.rows[cursor_row - 1].chars.len;
+                        self.cx = self.rows.items[file_row - 1].chars.items.len;
                         // if previous row is too long update the coloff
                         if (self.cx > self.screencols - 1) {
                             self.coloff = self.cx - self.screencols + 1;
@@ -455,32 +456,38 @@ fn moveCursor(self: *Self, key: Key.Key) void {
             }
         },
         .ARROW_RIGHT => {
-            // if there cursor is not at the end of the row
-            if (current_row and cursor_col < current_row.chars.len) {
-                if (self.cx == self.screencols - 1) {
-                    self.coloff += 1;
-                } else {
-                    self.cx += 1;
-                }
-            } else if (current_row and cursor_col == current_row.chars.len) {
-                self.cx = 0;
-                self.coloff = 0;
-                if (self.cy == self.screenrows - 1) {
-                    self.rowoff += 1;
-                } else {
-                    self.cy += 1;
+            if (file_row < self.rows.items.len) {
+                const current_row = &self.rows.items[file_row];
+
+                // if there cursor is not at the end of the row
+                if (file_col < current_row.chars.items.len) {
+                    if (self.cx == self.screencols - 1) {
+                        self.coloff += 1;
+                    } else {
+                        self.cx += 1;
+                    }
+                } else if (file_col == current_row.chars.items.len) {
+                    self.cx = 0;
+                    self.coloff = 0;
+                    if (self.cy == self.screenrows - 1) {
+                        self.rowoff += 1;
+                    } else {
+                        self.cy += 1;
+                    }
                 }
             }
         },
         .ARROW_UP => {
             if (self.cy == 0) {
-                if (self.rowoff) self.rowoff -= 1;
+                if (self.rowoff != 0) {
+                    self.rowoff -= 1;
+                }
             } else {
                 self.cy -= 1;
             }
         },
         .ARROW_DOWN => {
-            if (cursor_row < self.numrows) {
+            if (file_row < self.rows.items.len) {
                 if (self.cy == self.screenrows - 1) {
                     self.rowoff += 1;
                 } else {
@@ -488,36 +495,32 @@ fn moveCursor(self: *Self, key: Key.Key) void {
                 }
             }
         },
+        else => {
+            unreachable;
+        },
     }
     // Fix cx if the current line has not enough chars.
-    cursor_row = self.rowoff + self.cy;
-    cursor_col = self.coloff + self.cx;
-    current_row = if (cursor_row >= self.numrows) {
-        null;
-    } else {
-        &self.row[cursor_row];
-    };
-    if (cursor_col > current_row.chars.len) {
-        self.cx -= cursor_col - rowlen;
-        if (self.cx < 0) {
-            self.coloff += self.cx;
-            self.cx = 0;
+    file_row = self.rowoff + self.cy;
+    file_col = self.coloff + self.cx;
+
+    if (file_row < self.rows.items.len) {
+        const current_row = self.rows.items[file_row];
+        if (current_row.chars.items.len < file_col) {
+            self.cx -= file_col - current_row.chars.items.len;
+            if (self.cx < 0) {
+                self.coloff += self.cx;
+                self.cx = 0;
+            }
         }
     }
 }
 
 // Process events arriving from the standard input, which is, the user
 // is typing stuff on the terminal.
-// #define KILO_QUIT_TIMES 3
-pub fn processKeypress(self: *Self, key: Key.Key) void {
-    // When the file is modified, requires Ctrl-q to be pressed N times
-    // before actually quitting.
-    // static int quit_times = KILO_QUIT_TIMES;
-    // const quit_times: u32 = 3;
-
+pub fn processKeypress(self: *Self, key: Key.Key) !void {
     switch (key) {
         .ENTER => { // Enter
-            self.insertNewline();
+            try self.insertNewline();
         },
         .CTRL_C => { // Ctrl-c
             // We ignore ctrl-c, it can't be so simple to lose the changes
@@ -535,7 +538,7 @@ pub fn processKeypress(self: *Self, key: Key.Key) void {
             // break;
         },
         .CTRL_S => { // Ctrl-s
-            self.save();
+            try self.save();
         },
         // .CTRL_F => {
         // editorFind(fd);
@@ -545,7 +548,7 @@ pub fn processKeypress(self: *Self, key: Key.Key) void {
         .CTRL_H, // Ctrl-h
         .DEL_KEY,
         => {
-            self.delChar();
+            try self.delChar();
         },
         // .PAGE_UP, .PAGE_DOWN => {
         //     if (c == PAGE_UP and self.cy != 0) {
@@ -576,7 +579,7 @@ pub fn processKeypress(self: *Self, key: Key.Key) void {
             // break;
         },
         else => {
-            self.insertChar(@enumToInt(key));
+            try self.insertChar(@enumToInt(key));
         },
     }
 
@@ -585,7 +588,7 @@ pub fn processKeypress(self: *Self, key: Key.Key) void {
 
 // Load the specified program in the editor memory and returns 0 on success
 // or 1 on error.
-pub fn editorOpen(self: *Self, filename: []u8) !void {
+pub fn openFile(self: *Self, filename: []u8) !void {
     var file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
 
@@ -594,15 +597,25 @@ pub fn editorOpen(self: *Self, filename: []u8) !void {
 
     var index: usize = 0;
     while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| : (index += 1) {
-        const row = try EditorRow.new(line, index, self.syntax, self.allocator);
-        try self.rows.append(row);
+        // std.log.info("{s}", .{line});
+        // self.allocator.free(line);
+        var row = try EditorRow.new(line, index, self.syntax, self.allocator);
+        std.log.info("{s}", .{row.chars.items});
+        std.log.info("{s}", .{row.highlight.items});
+        std.log.info("{s}", .{row.render.items});
+        row.deinit();
+
+        // try self.rows.append(row);
     } else |e| {
-        return e;
+      if (e != error.EndOfStream) {
+          return e;
+      }
+        std.log.info("finished reading: {}", .{e});
     }
 }
 
 // Save the current file on disk. Return 0 on success, 1 on error.
-fn save(_: *Self) void {
+fn save(_: *Self) !void {
     // int len;
     // char *buf = editorRowsToString(&len);
     // int fd = open(E.filename,O_RDWR|O_CREAT,0644);
