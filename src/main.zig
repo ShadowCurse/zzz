@@ -181,6 +181,9 @@ pub fn main() anyerror!void {
     var editor = try Editor.new(allocator);
     defer editor.deinit();
 
+    const window_size = try getWindowSize(std.io.getStdIn(), std.io.getStdOut());
+    editor.updateSize(window_size.row, window_size.col);
+
     // TODO
     // signal(SIGWINCH, handleSigWinCh);
 
@@ -189,19 +192,11 @@ pub fn main() anyerror!void {
 
     const orig_termios = try enableRawMode(std.io.getStdIn());
 
-    // const in = std.io.getStdIn();
-    // while (true) {
-    //     const key = try Key.readKey(in);
-    //     std.debug.print("read: {}\n", .{key});
-    //     if (key == Key.Key.ESC) {
-    //         break;
-    //     }
-    // }
-
-    // while (true) {
-        try editor.refreshScreen(std.io.getStdIn());
-    //     var key = try Key.readKey(std.io.getStdIn());
-    //     try editor.processKeypress(key);
-    // }
+    var exit: bool = false;
+    while (!exit) {
+        try editor.refreshScreen(std.io.getStdOut());
+        var key = try Key.readKey(std.io.getStdIn());
+        exit = try editor.processKeypress(key);
+    }
     try disableRawMode(orig_termios, std.io.getStdIn());
 }
