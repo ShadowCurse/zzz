@@ -60,10 +60,10 @@ pub fn new(allocator: Allocator) !Self {
 
 pub fn deinit(self: *Self) void {
     for (self.rows.items) |*r| {
-      r.*.deinit();
+        r.*.deinit();
     }
     self.rows.deinit();
-  }
+}
 
 pub fn updateSize(self: *Self, rows: u64, cols: u64) void {
     self.screenrows = rows;
@@ -73,10 +73,11 @@ pub fn updateSize(self: *Self, rows: u64, cols: u64) void {
 // Select the syntax highlight scheme depending on the filename,
 // setting it in the global self E.syntax.
 pub fn selectSyntaxHighlight(self: *Self, filename: []u8) void {
-    for (HLDB) |s| {
+    for (&HLDB) |*s| {
         for (s.extensions) |ext| {
-            if (std.mem.endsWith(u8, filename, ext))
-                self.syntax = &s;
+            if (std.mem.endsWith(u8, filename, ext)) {
+                self.syntax = s;
+            }
             return;
         }
     }
@@ -223,46 +224,7 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
         }
 
         const row = &self.rows.items[filerow];
-        var remaining_line_width = row.render.items.len - self.coloff;
-        var current_color: i32 = -1;
-        if (remaining_line_width > 0) {
-            if (remaining_line_width > self.screencols) {
-                remaining_line_width = self.screencols;
-            }
-            var chars = row.render.items[self.coloff..];
-            var highlight = row.highlight.items[self.coloff..];
-            for (0..remaining_line_width) |j| {
-                if (highlight[j] == Syntax.HL_NONPRINT) {
-                    var symbol: u8 = undefined;
-                    try screen_buffer.appendSlice("\x1b[7m");
-                    if (chars[j] <= 26) {
-                        symbol = '@' + chars[j];
-                    } else {
-                        symbol = '?';
-                    }
-                    try screen_buffer.appendNTimes(symbol, 1);
-                    try screen_buffer.appendSlice("\x1b[0m");
-                } else if (highlight[j] == Syntax.HL_NORMAL) {
-                    if (current_color != -1) {
-                        try screen_buffer.appendSlice("\x1b[39m");
-                        current_color = -1;
-                    }
-                    try screen_buffer.appendNTimes(chars[j], 1);
-                } else {
-                    const color = Syntax.syntaxToColor(highlight[j]);
-                    if (color != current_color) {
-                        var buf: [16]u8 = undefined;
-                        _ = try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{color});
-                        current_color = color;
-                        try screen_buffer.appendSlice(&buf);
-                    }
-                    try screen_buffer.appendSlice(chars[j .. j + 1]);
-                }
-            }
-        }
-        try screen_buffer.appendSlice("\x1b[39m");
-        try screen_buffer.appendSlice("\x1b[0K");
-        try screen_buffer.appendSlice("\r\n");
+        try row.renderToString(self.coloff, self.screencols, &screen_buffer);
     }
 
     // Create a two rows status. First row:
@@ -294,137 +256,15 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     // Put cursor at its current position. Note that the horizontal position
     // at which the cursor is displayed may be different compared to 'self.cx'
     // because of TABs
-    // var j = 0;
-    // var cx = 1;
-    // var filerow = self.rowoff + self.cy;
-    // var row = if (filerow >= self.numrows) {
-    //     null;
-    // } else {
-    //     &self.row[filerow];
-    // };
-    // if (row) {
-    //     j = self.coloff;
-    //     while (j < (self.cx + self.coloff)) : (j += 1) {
-    //         if (j < row.size and row.chars[j] == Key.TAB) cx += 7 - ((cx) % 8);
-    //         cx += 1;
-    //     }
-    // }
-    // snprintf(buf, sizeof(buf), "\x1b[%d;%dH", self.cy + 1, cx);
-    // screen_buffer.appendSlice(buf);
+    var seq: [32]u8 = undefined;
+    var fixed_allo = std.heap.FixedBufferAllocator.init(&seq);
+    const alloc = fixed_allo.allocator();
+    const buf = try std.fmt.allocPrint(alloc, "\x1b[{d};{d}H", .{ self.cy + 1, self.cx });
+
+    try screen_buffer.appendSlice(buf);
     try screen_buffer.appendSlice("\x1b[?25h"); // Show cursor.
     _ = try stdio.write(screen_buffer.items);
 }
-
-// fn find(self: *Self, fd: std.os.fd_t) void {
-//     var query: [KILO_QUERY_LEN + 1]u8; // = {0};
-//     var qlen = 0;
-//     var last_match = -1; // Last line where a match was found. -1 for none.
-//     var find_next = 0; // if 1 search next, if -1 search prev.
-//     var saved_hl_line = -1; // No saved HL
-//     var saved_hl = null;
-//
-//     // #define FIND_RESTORE_HL do { \
-//     //     if (saved_hl) { \
-//     //         memcpy(E.row[saved_hl_line].hl,saved_hl, E.row[saved_hl_line].rsize); \
-//     //         free(saved_hl); \
-//     //         saved_hl = NULL; \
-//     //     } \
-//     // } while (0)
-//
-//     // Save the cursor position in order to restore it later.
-//     var saved_cx = self.cx;
-//     var saved_cy = self.cy;
-//     var saved_coloff = self.coloff;
-//     var saved_rowoff = self.rowoff;
-//
-//     while (1) {
-//         // editorSetStatusMessage(
-//         //     "Search: %s (Use ESC/Arrows/Enter)", query);
-//         // editorRefreshScreen();
-//         self.refreshScreen();
-//
-//         var c = readKey(fd);
-//         if (c == DEL_KEY or c == CTRL_H or c == BACKSPACE) {
-//             if (qlen != 0) {
-//                 qlen -= 1;
-//                 query[qlen] = '\0';
-//             }
-//             last_match = -1;
-//         } else if (c == ESC or c == ENTER) {
-//             if (c == ESC) {
-//                 self.cx = saved_cx;
-//                 self.cy = saved_cy;
-//                 self.coloff = saved_coloff;
-//                 self.rowoff = saved_rowoff;
-//             }
-//             FIND_RESTORE_HL;
-//             editorSetStatusMessage("");
-//             return;
-//         } else if (c == ARROW_RIGHT or c == ARROW_DOWN) {
-//             find_next = 1;
-//         } else if (c == ARROW_LEFT or c == ARROW_UP) {
-//             find_next = -1;
-//         } else if (isprint(c)) {
-//             if (qlen < KILO_QUERY_LEN) {
-//                 query[qlen] = c;
-//                 qlen += 1;
-//                 query[qlen] = '\0';
-//                 last_match = -1;
-//             }
-//         }
-//
-//         // Search occurrence.
-//         if (last_match == -1) find_next = 1;
-//         if (find_next) {
-//             var match = NULL;
-//             var match_offset = 0;
-//             var i = 0;
-//             var current = last_match;
-//
-//             while (i < self.numrows) : (i += 1) {
-//                 current += find_next;
-//                 if (current == -1) {
-//                     current = self.numrows - 1;
-//                 } else if (current == self.numrows) current = 0;
-//                 match = strstr(self.row[current].render, query);
-//                 if (match) {
-//                     match_offset = match - self.row[current].render;
-//                     break;
-//                 }
-//             }
-//             find_next = 0;
-//
-//             // Highlight
-//             // FIND_RESTORE_HL;
-//             if (saved_hl) {
-//                 memcpy(E.row[saved_hl_line].hl, saved_hl, E.row[saved_hl_line].rsize);
-//                 free(saved_hl);
-//                 saved_hl = NULL;
-//             }
-//
-//             if (match) {
-//                 erow * row = &E.row[current];
-//                 last_match = current;
-//                 if (row.hl) {
-//                     saved_hl_line = current;
-//                     saved_hl = malloc(row.rsize);
-//                     memcpy(saved_hl, row.hl, row.rsize);
-//                     memset(row.hl + match_offset, HL_MATCH, qlen);
-//                 }
-//                 self.cy = 0;
-//                 self.cx = match_offset;
-//                 self.rowoff = current;
-//                 self.coloff = 0;
-//                 // Scroll horizontally as needed.
-//                 if (self.cx > self.screencols) {
-//                     var diff = self.cx - self.screencols;
-//                     self.cx -= diff;
-//                     self.coloff += diff;
-//                 }
-//             }
-//         }
-//     }
-// }
 
 // Handle cursor position change because arrow keys were pressed.
 fn moveCursor(self: *Self, key: Key.Key) void {
@@ -517,7 +357,7 @@ fn moveCursor(self: *Self, key: Key.Key) void {
 
 // Process events arriving from the standard input, which is, the user
 // is typing stuff on the terminal.
-pub fn processKeypress(self: *Self, key: Key.Key) !void {
+pub fn processKeypress(self: *Self, key: Key.Key) !bool {
     switch (key) {
         .ENTER => { // Enter
             try self.insertNewline();
@@ -536,6 +376,7 @@ pub fn processKeypress(self: *Self, key: Key.Key) !void {
             // }
             // exit(0);
             // break;
+            return true;
         },
         .CTRL_S => { // Ctrl-s
             try self.save();
@@ -583,7 +424,7 @@ pub fn processKeypress(self: *Self, key: Key.Key) !void {
         },
     }
 
-    // quit_times = KILO_QUIT_TIMES; // Reset it to the original value.
+    return false;
 }
 
 // Load the specified program in the editor memory and returns 0 on success
@@ -596,20 +437,16 @@ pub fn openFile(self: *Self, filename: []u8) !void {
     var in_stream = buf_reader.reader();
 
     var index: usize = 0;
+    // std.log.info("editor self.syntax: {?}", .{self.syntax});
     while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| : (index += 1) {
-        // std.log.info("{s}", .{line});
-        // self.allocator.free(line);
+        // std.log.info("adding line: {s}", .{line});
+        // std.log.info("editor self.syntax: {?}", .{self.syntax});
         var row = try EditorRow.new(line, index, self.syntax, self.allocator);
-        std.log.info("{s}", .{row.chars.items});
-        std.log.info("{s}", .{row.highlight.items});
-        std.log.info("{s}", .{row.render.items});
-        row.deinit();
-
-        // try self.rows.append(row);
+        try self.rows.append(row);
     } else |e| {
-      if (e != error.EndOfStream) {
-          return e;
-      }
+        if (e != error.EndOfStream) {
+            return e;
+        }
         std.log.info("finished reading: {}", .{e});
     }
 }
@@ -617,9 +454,9 @@ pub fn openFile(self: *Self, filename: []u8) !void {
 // Save the current file on disk. Return 0 on success, 1 on error.
 fn save(_: *Self) !void {
     // int len;
-    // char *buf = editorRowsToString(&len);
-    // int fd = open(E.filename,O_RDWR|O_CREAT,0644);
-    // if (fd == -1) goto writeerr;
+    //   char *buf = editorRowsToString(&len);
+    // int   fd = open(E.filename,O_RDWR|O_CREAT,0644);
+    //   if (fd == -1) goto writeerr;
     //
     // // Use truncate + a single write(2) call in order to make saving
     // // a bit safer, under the limits of what we can do in a small editor.

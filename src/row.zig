@@ -96,6 +96,53 @@ pub const EditorRow = struct {
         try self.updateRender();
     }
 
+    pub fn renderToString(self: *Self, coloff: u64, screencols: u64, string: *String) !void {
+        var remaining_line_width = self.render.items.len - coloff;
+        var current_color: i32 = -1;
+        if (remaining_line_width > 0) {
+            if (remaining_line_width > screencols) {
+                remaining_line_width = screencols;
+            }
+            var render_chars = self.render.items[coloff..];
+            var highlight = self.highlight.items[coloff..];
+            for (0..remaining_line_width) |j| {
+                switch (highlight[j]) {
+                    Syntax.HL_NORMAL => {
+                        if (current_color != -1) {
+                            try string.appendSlice("\x1b[39m");
+                            current_color = -1;
+                        }
+                        try string.appendNTimes(render_chars[j], 1);
+                    },
+                    Syntax.HL_NONPRINT => {
+                        var symbol: u8 = undefined;
+                        try string.appendSlice("\x1b[7m");
+                        if (render_chars[j] <= 26) {
+                            symbol = '@' + render_chars[j];
+                        } else {
+                            symbol = '?';
+                        }
+                        try string.appendNTimes(symbol, 1);
+                        try string.appendSlice("\x1b[0m");
+                    },
+                    else => {
+                        const color = Syntax.syntaxToColor(highlight[j]);
+                        if (color != current_color) {
+                            var buf: [16]u8 = undefined;
+                            _ = try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{color});
+                            current_color = color;
+                            try string.appendSlice(&buf);
+                        }
+                        try string.appendSlice(render_chars[j .. j + 1]);
+                    },
+                }
+            }
+        }
+        try string.appendSlice("\x1b[39m");
+        try string.appendSlice("\x1b[0K");
+        try string.appendSlice("\r\n");
+    }
+
     // Set every byte of self.hl (that corresponds to every character in the line)
     // to the right syntax highlight type (HL_* defines).
     pub fn updateSyntax(self: *Self) !void {
@@ -115,17 +162,18 @@ pub const EditorRow = struct {
 
         // Point to the first non-space char.
         var i: usize = 0;
-        while (ctype.isspace(self.render.items[i]) == 0) : (i += 1) {}
+        while (i < self.render.items.len and ctype.isspace(self.render.items[i]) != 0) : (i += 1) {}
 
-        var word_start = true; // Tell the parser if 'i' points to start of word.
-        var in_string: ?u8 = null; // Are we inside "" or '' ?
+        // Tell the parser if 'i' points to start of word.
+        var word_start = true;
+        var in_string: ?u8 = null;
 
         // If the previous line has an open comment, this line starts
         // with an open comment state.
 
-        outer: while (i < self.render.items.len) {
+        while (i < self.render.items.len) {
             // Handle // comments.
-            if (word_start and &self.render.items[i .. i + 2] == &scs) {
+            if (word_start and i + 2 <= self.render.items.len and std.mem.eql(u8, self.render.items[i .. i + 2], scs)) {
                 // From here to end is a comment
                 std.mem.set(u8, self.highlight.items[i..self.highlight.items.len], Syntax.HL_COMMENT);
                 return;
@@ -161,67 +209,47 @@ pub const EditorRow = struct {
                     self.highlight.items[i + 1] = Syntax.HL_STRING;
                     word_start = false;
                     i += 2;
-                    continue;
-                }
-                // if current char is end of string (" or ')
-                if (self.render.items[i] == in_string.?) {
-                    in_string = null;
-                }
-                i += 1;
-                continue;
-            } else {
-                if (self.render.items[i] == '\"' or self.render.items[i] == '\'') {
-                    in_string = self.render.items[i];
-                    self.highlight.items[i] = Syntax.HL_STRING;
-                    word_start = false;
+                } else {
+                    // if current char is end of string (" or ')
+                    if (self.render.items[i] == in_string.?) {
+                        in_string = null;
+                    }
                     i += 1;
-                    continue;
                 }
-            }
-
-            // Handle non printable chars.
-            if (ctype.isprint(self.render.items[i]) == 0) {
+            } else if (self.render.items[i] == '\"' or self.render.items[i] == '\'') {
+                in_string = self.render.items[i];
+                self.highlight.items[i] = Syntax.HL_STRING;
+                word_start = false;
+                i += 1;
+            } else if (ctype.isprint(self.render.items[i]) == 0) {
                 self.highlight.items[i] = Syntax.HL_NONPRINT;
                 word_start = false;
                 i += 1;
-                continue;
-            }
-
-            // Handle numbers
-            if ((ctype.isdigit(self.render.items[i]) != 0 and (word_start or self.highlight.items[i - 1] == Syntax.HL_NUMBER)) or
+            } else if ((ctype.isdigit(self.render.items[i]) != 0 and (word_start or self.highlight.items[i - 1] == Syntax.HL_NUMBER)) or
                 (self.render.items[i] == '.' and 0 < i and self.highlight.items[i - 1] == Syntax.HL_NUMBER))
             {
                 self.highlight.items[i] = Syntax.HL_NUMBER;
                 word_start = false;
                 i += 1;
-                continue;
-            }
-
-            // Handle keywords and lib calls
-            if (word_start) {
-                for (0..keywords.len) |j| {
-                    var klen = keywords[j].len;
-                    var kw2 = keywords[j][klen - 1] == '|';
-                    if (kw2) klen -= 1;
-
-                    // if there is a keyword and there is separator after it
-                    if (&self.render.items[i .. i + klen] == &keywords[j] and isSeparator(self.render.items[i + klen])) {
-                        var kw: u8 = Syntax.HL_KEYWORD1;
-                        if (!kw2) {
-                            kw = Syntax.HL_KEYWORD2;
-                        }
-                        // Keyword
-                        std.mem.set(u8, self.highlight.items[i .. i + klen], kw);
-                        i += klen;
-                        word_start = false;
-                        continue :outer;
+            } else if (word_start) {
+                var found_keyword: ?[]const u8 = null;
+                for (keywords) |keyword| {
+                    if (keyword.len <= self.render.items.len - i and std.mem.eql(u8, self.render.items[i .. i + keyword.len], keyword) and isSeparator(self.render.items[i + keyword.len])) {
+                        found_keyword = keyword;
+                        break;
                     }
                 }
+                if (found_keyword) |keyword| {
+                    std.mem.set(u8, self.highlight.items[i .. i + keyword.len], Syntax.HL_KEYWORD1);
+                    i += keyword.len;
+                } else {
+                    i += 1;
+                }
+                word_start = false;
+            } else {
+                word_start = isSeparator(self.render.items[i]);
+                i += 1;
             }
-
-            // Not special chars
-            word_start = isSeparator(self.render.items[i]);
-            i += 1;
         }
         return;
     }
