@@ -173,7 +173,7 @@ pub const EditorRow = struct {
 
         while (i < self.render.items.len) {
             // Handle // comments.
-            if (word_start and i + 2 <= self.render.items.len and std.mem.eql(u8, self.render.items[i .. i + 2], scs)) {
+            if (word_start and i + 2 < self.render.items.len and std.mem.eql(u8, self.render.items[i .. i + 2], scs)) {
                 // From here to end is a comment
                 std.mem.set(u8, self.highlight.items[i..self.highlight.items.len], Syntax.HL_COMMENT);
                 return;
@@ -234,7 +234,7 @@ pub const EditorRow = struct {
             } else if (word_start) {
                 var found_keyword: ?[]const u8 = null;
                 for (keywords) |keyword| {
-                    if (keyword.len <= self.render.items.len - i and std.mem.eql(u8, self.render.items[i .. i + keyword.len], keyword) and isSeparator(self.render.items[i + keyword.len])) {
+                    if (keyword.len < self.render.items.len - i and std.mem.eql(u8, self.render.items[i .. i + keyword.len], keyword) and isSeparator(self.render.items[i + keyword.len])) {
                         found_keyword = keyword;
                         break;
                     }

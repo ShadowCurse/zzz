@@ -16,23 +16,19 @@ cx: u64,
 /// Cursor y position in characters
 cy: u64,
 /// Offset of row displayed
-rowoff: u64,
+row_offset: u64,
 // Offset of column displayed
-coloff: u64,
+column_offset: u64,
 /// Number dkjfbnk;djfof rows that we can show
-screenrows: u64,
+screen_height: u64,
 /// Number of cols that we can show
-screencols: u64,
-/// Terminal raw mode
-rawmode: bool,
+screen_width: u64,
 /// Rows
 rows: Rows,
 /// File modified but not saved
 dirty: bool,
 /// Currently open filename
 filename: ?[]u8,
-statusmsg: [80]u8,
-statusmsg_time: u64,
 /// Current syntax highlight
 syntax: ?*const EditorSyntax,
 allocator: Allocator,
@@ -43,16 +39,13 @@ pub fn new(allocator: Allocator) !Self {
     return Self{
         .cx = 0,
         .cy = 0,
-        .rowoff = 0,
-        .coloff = 0,
-        .screenrows = 0,
-        .screencols = 0,
-        .rawmode = false,
+        .row_offset = 0,
+        .column_offset = 0,
+        .screen_height = 0,
+        .screen_width = 0,
         .rows = try Rows.initCapacity(allocator, 0),
         .dirty = false,
         .filename = null,
-        .statusmsg = undefined,
-        .statusmsg_time = 0,
         .syntax = null,
         .allocator = allocator,
     };
@@ -66,8 +59,8 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn updateSize(self: *Self, rows: u64, cols: u64) void {
-    self.screenrows = rows;
-    self.screencols = cols;
+    self.screen_height = rows;
+    self.screen_width = cols;
 }
 
 // Select the syntax highlight scheme depending on the filename,
@@ -85,8 +78,8 @@ pub fn selectSyntaxHighlight(self: *Self, filename: []u8) void {
 
 // Insert the specified char at the current prompt position.
 fn insertChar(self: *Self, c: u8) !void {
-    var filerow = self.rowoff + self.cy;
-    var filecol = self.coloff + self.cx;
+    var filerow = self.row_offset + self.cy;
+    var filecol = self.column_offset + self.cx;
     // If the row where the cursor is currently located does not exist in our
     // logical representaion of the file, add enough empty rows as needed.
     while (self.rows.items.len <= filerow) {
@@ -95,8 +88,8 @@ fn insertChar(self: *Self, c: u8) !void {
     const row = &self.rows.items[filerow];
     try row.insertChar(filecol, c);
     // fix cursor
-    if (self.cx == self.screencols - 1) {
-        self.coloff += 1;
+    if (self.cx == self.screen_width - 1) {
+        self.column_offset += 1;
     } else {
         self.cx += 1;
     }
@@ -105,8 +98,8 @@ fn insertChar(self: *Self, c: u8) !void {
 
 // Delete the char at the current prompt position.
 fn delChar(self: *Self) !void {
-    var filerow = self.rowoff + self.cy;
-    var filecol = self.coloff + self.cx;
+    var filerow = self.row_offset + self.cy;
+    var filecol = self.column_offset + self.cx;
 
     if (filerow >= self.rows.items.len or (filecol == 0 and filerow == 0)) {
         return;
@@ -122,20 +115,20 @@ fn delChar(self: *Self) !void {
         delited_row.deinit();
 
         if (self.cy == 0) {
-            self.rowoff -= 1;
+            self.row_offset -= 1;
         } else {
             self.cy -= 1;
         }
         self.cx = filecol;
-        if (self.cx >= self.screencols) {
-            var shift = (self.screencols - self.cx) + 1;
+        if (self.cx >= self.screen_width) {
+            var shift = (self.screen_width - self.cx) + 1;
             self.cx -= shift;
-            self.coloff += shift;
+            self.column_offset += shift;
         }
     } else {
         try row.deleteChar(filecol - 1);
-        if (self.cx == 0 and self.coloff != 0) {
-            self.coloff -= 1;
+        if (self.cx == 0 and self.column_offset != 0) {
+            self.column_offset -= 1;
         } else {
             self.cx -= 1;
         }
@@ -146,8 +139,8 @@ fn delChar(self: *Self) !void {
 /// Inserting a newline is slightly complex as we have to handle inserting a
 /// newline in the middle of a line, splitting the line as needed.
 fn insertNewline(self: *Self) !void {
-    const filerow = self.rowoff + self.cy;
-    var filecol = self.coloff + self.cx;
+    const filerow = self.row_offset + self.cy;
+    var filecol = self.column_offset + self.cx;
 
     if (filerow >= self.rows.items.len) {
         if (filerow == self.rows.items.len) {
@@ -157,7 +150,9 @@ fn insertNewline(self: *Self) !void {
         var row = &self.rows.items[filerow];
         // If the cursor is over the current line size, we want to conceptually
         // think it's just over the last character.
-        if (filecol >= @as(u64, row.chars.items.len)) filecol = @as(u64, row.chars.items.len);
+        if (filecol >= @as(u64, row.chars.items.len)) {
+            filecol = @as(u64, row.chars.items.len);
+        }
         if (filecol == 0) {
             try self.insertRow(filerow, "");
         } else {
@@ -167,13 +162,13 @@ fn insertNewline(self: *Self) !void {
         }
     }
     // fix cursor position
-    if (self.cy == self.screenrows - 1) {
-        self.rowoff += 1;
+    if (self.cy == self.screen_height - 1) {
+        self.row_offset += 1;
     } else {
         self.cy += 1;
     }
     self.cx = 0;
-    self.coloff = 0;
+    self.column_offset = 0;
 }
 
 /// Insert a row at the specified position, shifting the other rows on the bottom
@@ -214,80 +209,69 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     var screen_buffer = try String.initCapacity(self.allocator, 0);
     defer screen_buffer.deinit();
 
-    try screen_buffer.appendSlice("\x1b[?25l"); // Hide cursor
-    try screen_buffer.appendSlice("\x1b[H"); // Go home
-    for (0..self.rows.items.len) |y| {
-        const filerow = self.rowoff + y;
+    // Hide cursor
+    try screen_buffer.appendSlice("\x1b[?25l");
+    // Go home
+    try screen_buffer.appendSlice("\x1b[H");
+
+    for (0..self.screen_height - 1) |y| {
+        const filerow = self.row_offset + y;
         if (filerow >= self.rows.items.len) {
+            // put curosr on the far left and add new line
             try screen_buffer.appendSlice("~\x1b[0K\r\n");
             continue;
         }
 
         const row = &self.rows.items[filerow];
-        try row.renderToString(self.coloff, self.screencols, &screen_buffer);
+        try row.renderToString(self.column_offset, self.screen_width, &screen_buffer);
     }
 
     // Create a two rows status. First row:
     try screen_buffer.appendSlice("\x1b[0K");
+    // Set color
     try screen_buffer.appendSlice("\x1b[7m");
-    // var status: [80]u8 = undefined;
-    // var rstatus: [80]u8 = undefined;
-    // var len = snprintf(status, sizeof(status), "%.20s - %d lines %s", self.filename, self.numrows); //, self.dirty ? "(modified)" : "");
-    // var rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", self.rowoff + self.cy + 1, self.numrows);
-    // if (len > self.screencols) len = self.screencols;
-    // screen_buffer.appendSlice(status);
-    // while (len < self.screencols) {
-    //     if (self.screencols - len == rlen) {
-    //         screen_buffer.appendSlice(rstatus);
-    //         break;
-    //     } else {
-    //         screen_buffer.appendSlice(" ");
-    //         len += 1;
-    //     }
-    // }
+    {
+        const msg = try std.fmt.allocPrint(self.allocator, "x: {d} y: {d}", .{ self.cx, self.cy });
+        defer self.allocator.free(msg);
+
+        try screen_buffer.appendSlice(msg);
+    }
+
+    // put curosr on the far left and add new line
     try screen_buffer.appendSlice("\x1b[0m\r\n");
 
-    // Second row depends on self.statusmsg and the status message update time.
-    try screen_buffer.appendSlice("\x1b[0K");
-    // var msglen = strlen(self.statusmsg);
-    // if (msglen & &time(NULL) - self.statusmsg_time < 5)
-    //     screen_buffer.appendSlice(self.statusmsg); //, msglen <= self.screencols ? msglen : self.screencols);
-
-    // Put cursor at its current position. Note that the horizontal position
-    // at which the cursor is displayed may be different compared to 'self.cx'
-    // because of TABs
-    var seq: [32]u8 = undefined;
+    var seq: [16]u8 = undefined;
     var fixed_allo = std.heap.FixedBufferAllocator.init(&seq);
     const alloc = fixed_allo.allocator();
-    const buf = try std.fmt.allocPrint(alloc, "\x1b[{d};{d}H", .{ self.cy + 1, self.cx });
-
+    const buf = try std.fmt.allocPrint(alloc, "\x1b[{d};{d}H", .{ self.cy, self.cx });
     try screen_buffer.appendSlice(buf);
+
     try screen_buffer.appendSlice("\x1b[?25h"); // Show cursor.
     _ = try stdio.write(screen_buffer.items);
 }
 
 // Handle cursor position change because arrow keys were pressed.
 fn moveCursor(self: *Self, key: Key.Key) void {
-    var file_row = self.rowoff + self.cy;
-    var file_col = self.coloff + self.cx;
+    var file_row = self.row_offset + self.cy;
+    var file_col = self.column_offset + self.cx;
 
     switch (key) {
         .ARROW_LEFT => {
             // if cursor at most left position
             if (self.cx == 0) {
                 // if there is horizontal offset
-                if (self.coloff != 0) {
-                    self.coloff -= 1;
+                if (self.column_offset != 0) {
+                    self.column_offset -= 1;
                 } else {
                     // if there is a row above we set cursor to the ends
                     // of that row
                     if (file_row > 0) {
                         self.cy -= 1;
                         self.cx = self.rows.items[file_row - 1].chars.items.len;
-                        // if previous row is too long update the coloff
-                        if (self.cx > self.screencols - 1) {
-                            self.coloff = self.cx - self.screencols + 1;
-                            self.cx = self.screencols - 1;
+                        // if previous row is too long update the column_offset
+                        if (self.cx > self.screen_width - 1) {
+                            self.column_offset = self.cx - self.screen_width + 1;
+                            self.cx = self.screen_width - 1;
                         }
                     }
                 }
@@ -301,16 +285,16 @@ fn moveCursor(self: *Self, key: Key.Key) void {
 
                 // if there cursor is not at the end of the row
                 if (file_col < current_row.chars.items.len) {
-                    if (self.cx == self.screencols - 1) {
-                        self.coloff += 1;
+                    if (self.cx == self.screen_width - 1) {
+                        self.column_offset += 1;
                     } else {
                         self.cx += 1;
                     }
                 } else if (file_col == current_row.chars.items.len) {
                     self.cx = 0;
-                    self.coloff = 0;
-                    if (self.cy == self.screenrows - 1) {
-                        self.rowoff += 1;
+                    self.column_offset = 0;
+                    if (self.cy == self.screen_height - 1) {
+                        self.row_offset += 1;
                     } else {
                         self.cy += 1;
                     }
@@ -319,8 +303,8 @@ fn moveCursor(self: *Self, key: Key.Key) void {
         },
         .ARROW_UP => {
             if (self.cy == 0) {
-                if (self.rowoff != 0) {
-                    self.rowoff -= 1;
+                if (self.row_offset != 0) {
+                    self.row_offset -= 1;
                 }
             } else {
                 self.cy -= 1;
@@ -328,8 +312,8 @@ fn moveCursor(self: *Self, key: Key.Key) void {
         },
         .ARROW_DOWN => {
             if (file_row < self.rows.items.len) {
-                if (self.cy == self.screenrows - 1) {
-                    self.rowoff += 1;
+                if (self.cy == self.screen_height - 1) {
+                    self.row_offset += 1;
                 } else {
                     self.cy += 1;
                 }
@@ -340,15 +324,15 @@ fn moveCursor(self: *Self, key: Key.Key) void {
         },
     }
     // Fix cx if the current line has not enough chars.
-    file_row = self.rowoff + self.cy;
-    file_col = self.coloff + self.cx;
+    file_row = self.row_offset + self.cy;
+    file_col = self.column_offset + self.cx;
 
     if (file_row < self.rows.items.len) {
         const current_row = self.rows.items[file_row];
         if (current_row.chars.items.len < file_col) {
             self.cx -= file_col - current_row.chars.items.len;
             if (self.cx < 0) {
-                self.coloff += self.cx;
+                self.column_offset += self.cx;
                 self.cx = 0;
             }
         }
@@ -359,76 +343,45 @@ fn moveCursor(self: *Self, key: Key.Key) void {
 // is typing stuff on the terminal.
 pub fn processKeypress(self: *Self, key: Key.Key) !bool {
     switch (key) {
-        .ENTER => { // Enter
-            try self.insertNewline();
-        },
-        .CTRL_C => { // Ctrl-c
-            // We ignore ctrl-c, it can't be so simple to lose the changes
-            // to the edited file.
-        },
-        .CTRL_Q => { // Ctrl-q
-            // Quit if the file was already saved.
-            // if (self.dirty & &quit_times) {
-            //     // editorSetStatusMessage("WARNING!!! File has unsaved changes. "
-            //     //     "Press Ctrl-Q %d more times to quit.", quit_times);
-            //     quit_times -= 1;
-            //     return;
-            // }
-            // exit(0);
-            // break;
+        .CTRL_C,
+        .CTRL_D,
+        .CTRL_F,
+        .CTRL_H,
+        .TAB,
+        .CTRL_L,
+        .CTRL_Q,
+        .CTRL_U,
+        .HOME_KEY,
+        .END_KEY,
+        .PAGE_UP,
+        .PAGE_DOWN,
+        => {},
+        .ESC => {
             return true;
         },
-        .CTRL_S => { // Ctrl-s
+        .ENTER => {
+            try self.insertNewline();
+        },
+        .CTRL_S => {
             try self.save();
         },
-        // .CTRL_F => {
-        // editorFind(fd);
-        // break;
-        // },
-        .BACKSPACE, // Backspace
-        .CTRL_H, // Ctrl-h
+        .BACKSPACE,
         .DEL_KEY,
         => {
             try self.delChar();
         },
-        // .PAGE_UP, .PAGE_DOWN => {
-        //     if (c == PAGE_UP and self.cy != 0) {
-        //         self.cy = 0;
-        //     } else if (c == PAGE_DOWN and self.cy != self.screenrows - 1)
-        //         self.cy = self.screenrows - 1;
-        //
-        //     var times = self.screenrows;
-        //     while (times != 0) : (times -= 1) {
-        //         if (c == PAGE_UP) {
-        //             self.moveCursor(ARROW_UP);
-        //         } else {
-        //             self.moveCursor(ARROW_DOWN);
-        //         }
-        //     }
-        //
-        //     break;
-        // },
         .ARROW_UP, .ARROW_DOWN, .ARROW_LEFT, .ARROW_RIGHT => {
             self.moveCursor(key);
         },
-        .CTRL_L => { // ctrl+l, clear screen
-            // Just refresht the line as side effect.
-            // break;
-        },
-        .ESC => {
-            // Nothing to do for ESC in this mode.
-            // break;
-        },
-        else => {
-            try self.insertChar(@enumToInt(key));
+        .Key => {
+            try self.insertChar(key.Key);
         },
     }
 
     return false;
 }
 
-// Load the specified program in the editor memory and returns 0 on success
-// or 1 on error.
+// Load the specified program in the editor memory
 pub fn openFile(self: *Self, filename: []u8) !void {
     var file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
@@ -437,40 +390,15 @@ pub fn openFile(self: *Self, filename: []u8) !void {
     var in_stream = buf_reader.reader();
 
     var index: usize = 0;
-    // std.log.info("editor self.syntax: {?}", .{self.syntax});
     while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| : (index += 1) {
-        // std.log.info("adding line: {s}", .{line});
-        // std.log.info("editor self.syntax: {?}", .{self.syntax});
         var row = try EditorRow.new(line, index, self.syntax, self.allocator);
         try self.rows.append(row);
     } else |e| {
         if (e != error.EndOfStream) {
             return e;
         }
-        std.log.info("finished reading: {}", .{e});
     }
 }
 
 // Save the current file on disk. Return 0 on success, 1 on error.
-fn save(_: *Self) !void {
-    // int len;
-    //   char *buf = editorRowsToString(&len);
-    // int   fd = open(E.filename,O_RDWR|O_CREAT,0644);
-    //   if (fd == -1) goto writeerr;
-    //
-    // // Use truncate + a single write(2) call in order to make saving
-    // // a bit safer, under the limits of what we can do in a small editor.
-    // if (ftruncate(fd,len) == -1) goto writeerr;
-    // if (write(fd,buf,len) != len) goto writeerr;
-    //
-    // close(fd);
-    // free(buf);
-    // E.dirty = 0;
-    // editorSetStatusMessage("%d bytes written on disk", len);
-
-    // writeerr:
-    //     free(buf);
-    //     if (fd != -1) close(fd);
-    //     editorSetStatusMessage("Can't save! I/O error: %s",strerror(errno));
-    //     return 1;
-}
+fn save(_: *Self) !void {}
