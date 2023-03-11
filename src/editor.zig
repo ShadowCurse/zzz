@@ -1,15 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const String = std.ArrayList(u8);
-const Rows = std.ArrayList(EditorRow);
+const Rows = std.ArrayList(Row);
 
 const Row = @import("row.zig");
 const Key = @import("key.zig");
 const Syntax = @import("syntax.zig");
-
-const EditorRow = Row.EditorRow;
-const EditorSyntax = Syntax.EditorSyntax;
-const HLDB = Syntax.HLDB;
 
 /// Cursor x position in characters
 cx: u64,
@@ -30,7 +26,7 @@ dirty: bool,
 /// Currently open filename
 filename: ?[]u8,
 /// Current syntax highlight
-syntax: ?*const EditorSyntax,
+syntax: ?*const Syntax,
 allocator: Allocator,
 
 const Self = @This();
@@ -66,7 +62,7 @@ pub fn updateSize(self: *Self, rows: u64, cols: u64) void {
 // Select the syntax highlight scheme depending on the filename,
 // setting it in the global self E.syntax.
 pub fn selectSyntaxHighlight(self: *Self, filename: []u8) void {
-    for (&HLDB) |*s| {
+    for (&Syntax.SYNTAX_ARRAY) |*s| {
         for (s.extensions) |ext| {
             if (std.mem.endsWith(u8, filename, ext)) {
                 self.syntax = s;
@@ -177,7 +173,7 @@ fn insertRow(self: *Self, at: usize, str: []u8) !void {
     if (at > self.rows.items.len)
         return;
 
-    const new_row = try EditorRow.new(str, at, self.syntax, self.allocator);
+    const new_row = try Row.new(str, at, self.syntax, self.allocator);
     try self.rows.insert(at, new_row);
 
     for (self.rows.items[at + 1 ..]) |*r| {
@@ -391,7 +387,7 @@ pub fn openFile(self: *Self, filename: []u8) !void {
 
     var index: usize = 0;
     while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| : (index += 1) {
-        var row = try EditorRow.new(line, index, self.syntax, self.allocator);
+        var row = try Row.new(line, index, self.syntax, self.allocator);
         try self.rows.append(row);
     } else |e| {
         if (e != error.EndOfStream) {
