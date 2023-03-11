@@ -2,25 +2,12 @@ const std = @import("std");
 const File = std.fs.File;
 const Termios = std.os.termios;
 
-const ctype = @cImport({
-    // See https://github.com/ziglang/zig/issues/515
-    // @cDefine("_NO_CRT_STDIO_INLINE", "1");
-    @cInclude("ctype.h");
-    @cInclude("string.h");
-});
-
 const Editor = @import("editor.zig");
 const Key = @import("key.zig");
-// usingnamespace @import("key.zig");
 const Row = @import("row.zig");
+const Cursor = @import("cursor.zig");
 
-const Position = struct { row: u32, col: u32 };
-
-const Error = error{
-    CursorPositon,
-};
-
-// Raw mode: 1960 magic shit.
+// Raw mode: 1960 magic
 fn enableRawMode(stdin: File) anyerror!Termios {
     std.log.info("enableRawMode", .{});
 
@@ -55,69 +42,39 @@ fn disableRawMode(orig_termios: Termios, stdin: File) anyerror!void {
     std.log.info("disableRawMode", .{});
     try std.os.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, orig_termios);
 }
-// Use the ESC [6n escape sequence to query the horizontal cursor position and return it.
-// On error -1 is returned, on success the position of the cursor is stored at *rows and *cols and 0 is returned.
-fn getCursorPosition(in: File, out: File) anyerror!Position {
-    // Report cursor location
-    _ = try out.write("\x1b[6n");
 
-    // Read the response: ESC [ {rows} ; {cols} R
-    var i: usize = 0;
-    var buff: [32]u8 = undefined;
-    while (i < buff.len - 1) : (i += 1) {
-        _ = try in.read(buff[i .. i + 1]);
-        if (buff[i] == 'R') {
-            break;
-        }
-    }
-    buff[i] = 0;
-
-    // Parse it.
-    if (buff[0] != @enumToInt(Key.Key.ESC) or buff[1] != '[') {
-        return Error.CursorPositon;
-    }
-
-    var iter = std.mem.split(u8, buff[2..(i - 1)], ";");
-    var rows_str = iter.next().?;
-    var cols_str = iter.next().?;
-    var rows = try std.fmt.parseInt(u32, rows_str, 10);
-    var cols = try std.fmt.parseInt(u32, cols_str, 10);
-
-    return Position{
-        .row = rows,
-        .col = cols,
-    };
-}
-
+const Size = struct { height: u32, width: u32 };
 // Try to get the number of columns in the current terminal. If the ioctl()
 // call fails the function will try to query the terminal itself.
 // Returns 0 on success, -1 on error.
-fn getWindowSize(in: File, out: File) anyerror!Position {
+fn getWindowSize(in: File, out: File) anyerror!Size {
     // struct winsize ws;
     var ws: std.os.linux.winsize = undefined;
 
     const TIOCGWINSZ: u32 = 0x5413;
     if (std.os.linux.ioctl(1, TIOCGWINSZ, @ptrToInt(&ws)) == -1 or ws.ws_col == 0) {
         // Get the initial position so we can restore it later.
-        var orig_pos = try getCursorPosition(in, out);
+        var orig_pos = try Cursor.getCursorPosition(in, out);
         // Go to right/bottom margin and get position.
         _ = try out.write("\x1b[999C\x1b[999B");
         // Get new position
-        var pos = try getCursorPosition(in, out);
-        // Restore position.
+        var pos = try Cursor.getCursorPosition(in, out);
 
+        // Restore position.
         var seq: [32]u8 = undefined;
         var fixed_allo = std.heap.FixedBufferAllocator.init(&seq);
         const alloc = fixed_allo.allocator();
-
         _ = try std.fmt.allocPrint(alloc, "\x1b[{d};%{d}H", .{ orig_pos.row, orig_pos.col });
         _ = try out.write(&seq);
 
-        return pos;
+        return .{
+            .height = pos.row,
+            .width = pos.col,
+          };
     } else {
-        return Position{
-            .row = ws.ws_row,
-            .col = ws.ws_col,
+        return .{
+            .height = ws.ws_row,
+            .width = ws.ws_col,
         };
     }
 }
@@ -182,7 +139,7 @@ pub fn main() anyerror!void {
     defer editor.deinit();
 
     const window_size = try getWindowSize(std.io.getStdIn(), std.io.getStdOut());
-    editor.updateSize(window_size.row, window_size.col);
+    editor.updateSize(window_size.height, window_size.width);
 
     // TODO
     // signal(SIGWINCH, handleSigWinCh);

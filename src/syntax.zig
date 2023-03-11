@@ -3,21 +3,21 @@ keywords: []const []const u8,
 singleline_comment_start: []const u8,
 multiline_comment_start: []const u8,
 multiline_comment_end: []const u8,
-flags: u32,
 
 const Self = @This();
 
-pub const HL_NORMAL = 0;
-pub const HL_NONPRINT = 1;
-pub const HL_COMMENT = 2;
-pub const HL_MLCOMMENT = 3;
-pub const HL_KEYWORD1 = 4;
-pub const HL_KEYWORD2 = 5;
-pub const HL_STRING = 6;
-pub const HL_NUMBER = 7;
-pub const HL_MATCH = 8;
-pub const HL_HIGHLIGHT_STRINGS = (1 << 0);
-pub const HL_HIGHLIGHT_NUMBERS = (1 << 1);
+pub const HighlightType = enum {
+    HL_NORMAL,
+    HL_NONPRINT,
+    HL_COMMENT,
+    HL_KEYWORD1,
+    HL_KEYWORD2,
+    HL_STRING,
+    HL_NUMBER,
+    HL_MATCH,
+    HL_HIGHLIGHT_STRINGS,
+    HL_HIGHLIGHT_NUMBERS,
+};
 
 // Here we define an array of syntax highlights by extensions, keywords, comments delimiters and flags.
 pub const SYNTAX_ARRAY = [_]Self{
@@ -28,18 +28,18 @@ Self{
     .singleline_comment_start = "//",
     .multiline_comment_start = "/*",
     .multiline_comment_end = "*/",
-    .flags = HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS,
 }};
 
+// TODO make configurable maybe
 // Maps syntax highlight token types to terminal colors.
-pub fn syntaxToColor(hl: i32) i32 {
+pub fn highlightToColor(hl: HighlightType) u8 {
     switch (hl) {
-        HL_COMMENT, HL_MLCOMMENT => return 36, // cyan
-        HL_KEYWORD1 => return 33, // yellow
-        HL_KEYWORD2 => return 32, // green
-        HL_STRING => return 35, // magenta
-        HL_NUMBER => return 31, // red
-        HL_MATCH => return 34, // blu
+        .HL_COMMENT => return 36, // cyan
+        .HL_KEYWORD1 => return 33, // yellow
+        .HL_KEYWORD2 => return 32, // green
+        .HL_STRING => return 35, // magenta
+        .HL_NUMBER => return 31, // red
+        .HL_MATCH => return 34, // blue
         else => return 37, // white
     }
 }

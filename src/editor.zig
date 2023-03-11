@@ -6,6 +6,7 @@ const Rows = std.ArrayList(Row);
 const Row = @import("row.zig");
 const Key = @import("key.zig");
 const Syntax = @import("syntax.zig");
+const Cursor = @import("cursor.zig");
 
 /// Cursor x position in characters
 cx: u64,
@@ -54,9 +55,9 @@ pub fn deinit(self: *Self) void {
     self.rows.deinit();
 }
 
-pub fn updateSize(self: *Self, rows: u64, cols: u64) void {
-    self.screen_height = rows;
-    self.screen_width = cols;
+pub fn updateSize(self: *Self, height: u64, width: u64) void {
+    self.screen_height = height;
+    self.screen_width = width;
 }
 
 // Select the syntax highlight scheme depending on the filename,
@@ -205,27 +206,26 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     var screen_buffer = try String.initCapacity(self.allocator, 0);
     defer screen_buffer.deinit();
 
-    // Hide cursor
-    try screen_buffer.appendSlice("\x1b[?25l");
-    // Go home
-    try screen_buffer.appendSlice("\x1b[H");
+    try screen_buffer.appendSlice(Cursor.HIDE_CURSOR);
+    try screen_buffer.appendSlice(Cursor.MOVE_CURSOR_TO_0_0);
 
     for (0..self.screen_height - 1) |y| {
         const filerow = self.row_offset + y;
         if (filerow >= self.rows.items.len) {
-            // put curosr on the far left and add new line
-            try screen_buffer.appendSlice("~\x1b[0K\r\n");
+            // Clear row and print ~ and go to the next line
+            try screen_buffer.appendSlice("~" ++ Cursor.ERASE_LINE_AFTER ++ "\r\n");
             continue;
         }
 
         const row = &self.rows.items[filerow];
         try row.renderToString(self.column_offset, self.screen_width, &screen_buffer);
+        try screen_buffer.appendSlice(Cursor.ERASE_LINE_AFTER ++ "\r\n");
     }
 
-    // Create a two rows status. First row:
-    try screen_buffer.appendSlice("\x1b[0K");
-    // Set color
-    try screen_buffer.appendSlice("\x1b[7m");
+    // Clear from cursor to the end of the line
+    try screen_buffer.appendSlice(Cursor.ERASE_LINE_AFTER);
+    // Invert color
+    try screen_buffer.appendSlice(Cursor.INVERT_COLORS);
     {
         const msg = try std.fmt.allocPrint(self.allocator, "x: {d} y: {d}", .{ self.cx, self.cy });
         defer self.allocator.free(msg);
@@ -233,16 +233,18 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
         try screen_buffer.appendSlice(msg);
     }
 
-    // put curosr on the far left and add new line
-    try screen_buffer.appendSlice("\x1b[0m\r\n");
+    // Reset colors and add new line
+    try screen_buffer.appendSlice(Cursor.SET_DEFAULT_COLOR ++ "\n");
 
     var seq: [16]u8 = undefined;
     var fixed_allo = std.heap.FixedBufferAllocator.init(&seq);
     const alloc = fixed_allo.allocator();
+    // Put cursor at self.cy self.cx
     const buf = try std.fmt.allocPrint(alloc, "\x1b[{d};{d}H", .{ self.cy, self.cx });
     try screen_buffer.appendSlice(buf);
 
-    try screen_buffer.appendSlice("\x1b[?25h"); // Show cursor.
+    // Show cursor
+    try screen_buffer.appendSlice(Cursor.SHOW_CURSOR);
     _ = try stdio.write(screen_buffer.items);
 }
 

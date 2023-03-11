@@ -3,7 +3,11 @@ const Allocator = std.mem.Allocator;
 const String = std.ArrayList(u8);
 
 const Syntax = @import("syntax.zig");
+const Cursor = @import("cursor.zig");
 const Key = @import("key.zig");
+
+const HighlightType = Syntax.HighlightType;
+const Highlight = std.ArrayList(HighlightType);
 
 const ctype = @cImport({
     // See https://github.com/ziglang/zig/issues/515
@@ -15,7 +19,7 @@ const ctype = @cImport({
 const Self = @This();
 
 fn isSeparator(c: u8) bool {
-    return c == 0 or ctype.isspace(c) != 0 or ctype.strchr(",.()+-/*=~%[];", c) != 0;
+    return std.ascii.isWhitespace(c) or std.mem.indexOfScalar(u8, ",.()+-/*=~%[];", c) != null;
 }
 
 /// Index in the file
@@ -23,7 +27,7 @@ file_index: usize,
 /// Row raw content
 chars: String,
 /// Syntax highlight for each character in render
-highlight: String,
+highlight: Highlight,
 /// Row content "rendered" for screen (with TABs)
 render: String,
 syntax: ?*const Syntax,
@@ -33,7 +37,7 @@ pub fn new(str: []u8, file_index: usize, syntax: ?*const Syntax, allocator: Allo
     var self = Self{
         .file_index = file_index,
         .chars = String.fromOwnedSlice(allocator, str),
-        .highlight = String.init(allocator),
+        .highlight = Highlight.init(allocator),
         .render = String.init(allocator),
         .syntax = syntax,
         .allocator = allocator,
@@ -92,9 +96,10 @@ pub fn resize(self: *Self, size: usize) !void {
     try self.updateRender();
 }
 
+// Render row the the provided string
 pub fn renderToString(self: *Self, coloff: u64, screencols: u64, string: *String) !void {
     var remaining_line_width = self.render.items.len - coloff;
-    var current_color: i32 = -1;
+    var current_color: ?u8 = null;
     if (remaining_line_width > 0) {
         if (remaining_line_width > screencols) {
             remaining_line_width = screencols;
@@ -103,29 +108,31 @@ pub fn renderToString(self: *Self, coloff: u64, screencols: u64, string: *String
         var highlight = self.highlight.items[coloff..];
         for (0..remaining_line_width) |j| {
             switch (highlight[j]) {
-                Syntax.HL_NORMAL => {
-                    if (current_color != -1) {
-                        try string.appendSlice("\x1b[39m");
-                        current_color = -1;
+                HighlightType.HL_NORMAL => {
+                    if (current_color != null) {
+                        try string.appendSlice(Cursor.SET_DEFAULT_COLOR);
+                        current_color = null;
                     }
                     try string.appendNTimes(render_chars[j], 1);
                 },
-                Syntax.HL_NONPRINT => {
+                HighlightType.HL_NONPRINT => {
                     var symbol: u8 = undefined;
-                    try string.appendSlice("\x1b[7m");
+                    try string.appendSlice(Cursor.INVERT_COLORS);
                     if (render_chars[j] <= 26) {
                         symbol = '@' + render_chars[j];
                     } else {
                         symbol = '?';
                     }
                     try string.appendNTimes(symbol, 1);
-                    try string.appendSlice("\x1b[0m");
+                    try string.appendSlice(Cursor.SET_DEFAULT_COLOR);
                 },
                 else => {
-                    const color = Syntax.syntaxToColor(highlight[j]);
+                    const color = Syntax.highlightToColor(highlight[j]);
                     if (color != current_color) {
                         var buf: [16]u8 = undefined;
+                        // Setting color
                         _ = try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{color});
+
                         current_color = color;
                         try string.appendSlice(&buf);
                     }
@@ -134,9 +141,7 @@ pub fn renderToString(self: *Self, coloff: u64, screencols: u64, string: *String
             }
         }
     }
-    try string.appendSlice("\x1b[39m");
-    try string.appendSlice("\x1b[0K");
-    try string.appendSlice("\r\n");
+    try string.appendSlice(Cursor.SET_DEFAULT_COLOR);
 }
 
 // Set every byte of self.hl (that corresponds to every character in the line)
@@ -144,7 +149,7 @@ pub fn renderToString(self: *Self, coloff: u64, screencols: u64, string: *String
 pub fn updateSyntax(self: *Self) !void {
     // reset all syntax to normal
     try self.highlight.resize(self.render.items.len);
-    std.mem.set(u8, self.highlight.items, Syntax.HL_NORMAL);
+    std.mem.set(HighlightType, self.highlight.items, HighlightType.HL_NORMAL);
 
     if (self.syntax == null) {
         return;
@@ -158,7 +163,7 @@ pub fn updateSyntax(self: *Self) !void {
 
     // Point to the first non-space char.
     var i: usize = 0;
-    while (i < self.render.items.len and ctype.isspace(self.render.items[i]) != 0) : (i += 1) {}
+    while (i < self.render.items.len and std.ascii.isWhitespace(self.render.items[i])) : (i += 1) {}
 
     // Tell the parser if 'i' points to start of word.
     var word_start = true;
@@ -171,7 +176,7 @@ pub fn updateSyntax(self: *Self) !void {
         // Handle // comments.
         if (word_start and i + 2 < self.render.items.len and std.mem.eql(u8, self.render.items[i .. i + 2], scs)) {
             // From here to end is a comment
-            std.mem.set(u8, self.highlight.items[i..self.highlight.items.len], Syntax.HL_COMMENT);
+            std.mem.set(HighlightType, self.highlight.items[i..self.highlight.items.len], HighlightType.HL_COMMENT);
             return;
         }
 
@@ -200,9 +205,9 @@ pub fn updateSyntax(self: *Self) !void {
 
         // Handle "" and ''
         if (in_string != null) {
-            self.highlight.items[i] = Syntax.HL_STRING;
+            self.highlight.items[i] = HighlightType.HL_STRING;
             if (self.render.items[i] == '\\') {
-                self.highlight.items[i + 1] = Syntax.HL_STRING;
+                self.highlight.items[i + 1] = HighlightType.HL_STRING;
                 word_start = false;
                 i += 2;
             } else {
@@ -214,17 +219,17 @@ pub fn updateSyntax(self: *Self) !void {
             }
         } else if (self.render.items[i] == '\"' or self.render.items[i] == '\'') {
             in_string = self.render.items[i];
-            self.highlight.items[i] = Syntax.HL_STRING;
+            self.highlight.items[i] = HighlightType.HL_STRING;
             word_start = false;
             i += 1;
-        } else if (ctype.isprint(self.render.items[i]) == 0) {
-            self.highlight.items[i] = Syntax.HL_NONPRINT;
+        } else if (!std.ascii.isPrint(self.render.items[i])) {
+            self.highlight.items[i] = HighlightType.HL_NONPRINT;
             word_start = false;
             i += 1;
-        } else if ((ctype.isdigit(self.render.items[i]) != 0 and (word_start or self.highlight.items[i - 1] == Syntax.HL_NUMBER)) or
-            (self.render.items[i] == '.' and 0 < i and self.highlight.items[i - 1] == Syntax.HL_NUMBER))
+        } else if ((std.ascii.isDigit(self.render.items[i]) and (word_start or self.highlight.items[i - 1] == HighlightType.HL_NUMBER)) or
+            (self.render.items[i] == '.' and self.render.items[i - 1] != '.' and self.highlight.items[i - 1] == HighlightType.HL_NUMBER))
         {
-            self.highlight.items[i] = Syntax.HL_NUMBER;
+            self.highlight.items[i] = HighlightType.HL_NUMBER;
             word_start = false;
             i += 1;
         } else if (word_start) {
@@ -236,7 +241,7 @@ pub fn updateSyntax(self: *Self) !void {
                 }
             }
             if (found_keyword) |keyword| {
-                std.mem.set(u8, self.highlight.items[i .. i + keyword.len], Syntax.HL_KEYWORD1);
+                std.mem.set(HighlightType, self.highlight.items[i .. i + keyword.len], HighlightType.HL_KEYWORD1);
                 i += keyword.len;
             } else {
                 i += 1;
