@@ -209,7 +209,8 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     try screen_buffer.appendSlice(Cursor.HIDE_CURSOR);
     try screen_buffer.appendSlice(Cursor.MOVE_CURSOR_TO_0_0);
 
-    for (0..self.screen_height - 1) |y| {
+    // subtract 2 because we have 1 status line and 1 empty line after that
+    for (0..self.screen_height - 2) |y| {
         const filerow = self.row_offset + y;
         if (filerow >= self.rows.items.len) {
             // Clear row and print ~ and go to the next line
@@ -227,20 +228,22 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     // Invert color
     try screen_buffer.appendSlice(Cursor.INVERT_COLORS);
     {
-        const msg = try std.fmt.allocPrint(self.allocator, "x: {d} y: {d}", .{ self.cx, self.cy });
+        const msg = try std.fmt.allocPrint(self.allocator, "rows: {d}, x: {d} y: {d}, cf: {d}, rf: {d}\n", .{ self.rows.items.len, self.cx, self.cy, self.column_offset, self.row_offset });
         defer self.allocator.free(msg);
 
         try screen_buffer.appendSlice(msg);
     }
 
     // Reset colors and add new line
-    try screen_buffer.appendSlice(Cursor.SET_DEFAULT_COLOR ++ "\n");
+    try screen_buffer.appendSlice(Cursor.SET_DEFAULT_COLOR);
 
     var seq: [16]u8 = undefined;
     var fixed_allo = std.heap.FixedBufferAllocator.init(&seq);
     const alloc = fixed_allo.allocator();
     // Put cursor at self.cy self.cx
-    const buf = try std.fmt.allocPrint(alloc, "\x1b[{d};{d}H", .{ self.cy, self.cx });
+    // In terminal position is 1 based so add 1 because in the editor
+    // position is 0 baesd
+    const buf = try std.fmt.allocPrint(alloc, "\x1b[{d};{d}H", .{ self.cy + 1, self.cx + 1 });
     try screen_buffer.appendSlice(buf);
 
     // Show cursor
