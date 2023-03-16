@@ -9,8 +9,6 @@ const Cursor = @import("cursor.zig");
 
 // Raw mode: 1960 magic
 fn enableRawMode(stdin: File) anyerror!Termios {
-    std.log.info("enableRawMode", .{});
-
     if (!stdin.isTty()) {
         std.log.err("passed fd is not a tty", .{});
         std.os.exit(1);
@@ -39,7 +37,6 @@ fn enableRawMode(stdin: File) anyerror!Termios {
 }
 
 fn disableRawMode(orig_termios: Termios, stdin: File) anyerror!void {
-    std.log.info("disableRawMode", .{});
     try std.os.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, orig_termios);
 }
 
@@ -70,7 +67,7 @@ fn getWindowSize(in: File, out: File) anyerror!Size {
         return .{
             .height = pos.row,
             .width = pos.col,
-          };
+        };
     } else {
         return .{
             .height = ws.ws_row,
@@ -138,7 +135,10 @@ pub fn main() anyerror!void {
     var editor = try Editor.new(allocator);
     defer editor.deinit();
 
-    const window_size = try getWindowSize(std.io.getStdIn(), std.io.getStdOut());
+    const std_in = std.io.getStdIn();
+    const std_out = std.io.getStdOut();
+
+    const window_size = try getWindowSize(std_in, std_out);
     editor.updateSize(window_size.height, window_size.width);
 
     // TODO
@@ -147,13 +147,13 @@ pub fn main() anyerror!void {
     editor.selectSyntaxHighlight(args[1]);
     try editor.openFile(args[1]);
 
-    const orig_termios = try enableRawMode(std.io.getStdIn());
+    const orig_termios = try enableRawMode(std_in);
 
     var exit: bool = false;
     while (!exit) {
-        try editor.refreshScreen(std.io.getStdOut());
-        var key = try Key.readKey(std.io.getStdIn());
+        try editor.refreshScreen(std_out);
+        var key = try Key.readKey(std_in);
         exit = try editor.processKeypress(key);
     }
-    try disableRawMode(orig_termios, std.io.getStdIn());
+    try disableRawMode(orig_termios, std_in);
 }
