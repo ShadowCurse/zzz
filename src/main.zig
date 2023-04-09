@@ -27,8 +27,10 @@ fn enableRawMode(stdin: File) anyerror!Termios {
     // local modes - choing off, canonical off, no extended functions, no signal chars (^Z,^C)
     raw.lflag &= ~(std.os.linux.ECHO | std.os.linux.ICANON | std.os.linux.IEXTEN | std.os.linux.ISIG);
     // control chars - set return condition: min number of bytes and timer.
-    raw.cc[5] = 0; //std.os.VMIN] = 0; // Return each byte, or zero for timeout.
-    raw.cc[7] = 1; //std.os.VTIME] = 1; // 100 ms timeout (unit is tens of second).
+    // Return each byte, or zero for timeout.
+    raw.cc[5] = 0;
+    // 100 ms timeout (unit is tens of second).
+    raw.cc[7] = 1;
 
     // put terminal in raw mode after flushing
     try std.os.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, raw);
@@ -75,42 +77,6 @@ fn getWindowSize(in: File, out: File) anyerror!Size {
         };
     }
 }
-
-// Turn the editor rows into a single heap-allocated string.
-// Returns the pointer to the heap-allocated string and populate the
-// integer pointed by 'buflen' with the size of the string, escluding
-// the final nulterm.
-// fn editorRowsToString(buflen: *u32) *u8 {
-//     // char *buf = NULL, *p;
-//     // int totlen = 0;
-//     // int j;
-//
-//     // Compute count of bytes
-//     for (j = 0; j < E.numrows; j+=1)
-//         totlen += E.row[j].size+1; // +1 is for "\n" at end of every row
-//     *buflen = totlen;
-//     totlen+=1; // Also make space for nulterm
-//
-//     p = buf = malloc(totlen);
-//     for (j = 0; j < E.numrows; j+=1) {
-//         memcpy(p,E.row[j].chars,E.row[j].size);
-//         p += E.row[j].size;
-//         *p = '\n';
-//         p+=1;
-//     }
-//     *p = '\0';
-//     return buf;
-// }
-
-// Set an editor status message for the second line of the status, at the
-// end of the screen.
-// fn editorSetStatusMessage(const char *fmt, ...) void {
-//     va_list ap;
-//     va_start(ap,fmt);
-//     vsnprintf(state.statusmsg,sizeof(state.statusmsg),fmt,ap);
-//     va_end(ap);
-//     state.statusmsg_time = time(NULL);
-// }
 
 // fn handleSigWinCh() void {
 //     updateWindowSize();
