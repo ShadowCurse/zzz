@@ -399,7 +399,21 @@ pub fn openFile(self: *Self, filename: []u8) !void {
             return e;
         }
     }
+    self.filename = filename;
 }
 
 // Save the current file on disk. Return 0 on success, 1 on error.
-fn save(_: *Self) !void {}
+fn save(self: *Self) !void {
+    var buffer = try String.initCapacity(self.allocator, 0);
+    defer buffer.deinit();
+
+    for (self.rows.items) |row| {
+        try buffer.appendSlice(row.chars.items);
+        try buffer.appendNTimes('\n', 1);
+    }
+
+    var file = try std.fs.cwd().openFile(self.filename.?, .{ .mode = .write_only });
+    defer file.close();
+
+    try file.writeAll(buffer.items);
+}
