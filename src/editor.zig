@@ -202,7 +202,7 @@ fn delRow(self: *Self, at: i32) void {
 
 // This function writes the whole screen using VT100 escape characters
 // starting from the logical self of the editor in the global self 'E'.
-pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
+pub fn refreshScreen(self: *Self, key: ?Key.Key, stdio: std.fs.File) anyerror!void {
     var screen_buffer = try String.initCapacity(self.allocator, 0);
     defer screen_buffer.deinit();
 
@@ -228,7 +228,7 @@ pub fn refreshScreen(self: *Self, stdio: std.fs.File) anyerror!void {
     // Invert color
     try screen_buffer.appendSlice(Cursor.INVERT_COLORS);
     {
-        const msg = try std.fmt.allocPrint(self.allocator, "rows: {d}, x: {d} y: {d}, cf: {d}, rf: {d}\n", .{ self.rows.items.len, self.cx, self.cy, self.column_offset, self.row_offset });
+        const msg = try std.fmt.allocPrint(self.allocator, "rows: {d}, x: {d} y: {d}, cf: {d}, rf: {d}, key: {any}\n", .{ self.rows.items.len, self.cx, self.cy, self.column_offset, self.row_offset, key });
         defer self.allocator.free(msg);
 
         try screen_buffer.appendSlice(msg);
@@ -344,7 +344,7 @@ fn moveCursor(self: *Self, key: Key.Key) void {
 // is typing stuff on the terminal.
 pub fn processKeypress(self: *Self, key: Key.Key) !bool {
     switch (key) {
-        .CTRL_C,
+        .ESC,
         .CTRL_D,
         .CTRL_F,
         .CTRL_H,
@@ -357,7 +357,7 @@ pub fn processKeypress(self: *Self, key: Key.Key) !bool {
         .PAGE_UP,
         .PAGE_DOWN,
         => {},
-        .ESC => {
+        .CTRL_C => {
             return true;
         },
         .ENTER => {
@@ -404,7 +404,12 @@ pub fn openFile(self: *Self, filename: []u8) !void {
 
 // Save the current file on disk. Return 0 on success, 1 on error.
 fn save(self: *Self) !void {
-    var buffer = try String.initCapacity(self.allocator, 0);
+    var size: usize = 0;
+    for (self.rows.items) |row| {
+      size += row.chars.items.len + 1;
+    }
+
+    var buffer = try String.initCapacity(self.allocator, size);
     defer buffer.deinit();
 
     for (self.rows.items) |row| {
