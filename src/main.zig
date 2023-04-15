@@ -116,11 +116,10 @@ pub fn main() anyerror!void {
     const orig_termios = try enableRawMode(std_in);
 
     var exit: bool = false;
-    var key: ?Key.Key = null;
     while (!exit) {
-        try editor.refreshScreen(key, std_out);
-        key = try Key.readKey(std_in);
-        exit = try editor.processKeypress(key.?);
+        try editor.refreshScreen(std_out);
+        var key = try Key.readKey(std_in);
+        exit = try editor.processKeypress(key);
     }
     try disableRawMode(orig_termios, std_in);
 }
