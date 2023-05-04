@@ -78,12 +78,30 @@ fn getWindowSize(in: File, out: File) anyerror!Size {
     }
 }
 
-// fn handleSigWinCh() void {
-//     updateWindowSize();
-//     if (state.cy > state.screenrows) state.cy = state.screenrows - 1;
-//     if (state.cx > state.screencols) state.cx = state.screencols - 1;
-//     editorRefreshScreen();
-// }
+fn handle_SIGWINCH(_: c_int) callconv(.C) void {
+    const std_in = std.io.getStdIn();
+    const std_out = std.io.getStdOut();
+
+    const window_size = getWindowSize(std_in, std_out) catch {
+        return;
+    };
+    global_editor.update_size(window_size);
+}
+
+const GlobalState = struct {
+    out: File,
+    editor: *Editor,
+
+    const Self = @This();
+
+    fn update_size(self: *Self, size: Size) void {
+        self.editor.updateSize(size.height, size.width);
+        self.editor.refreshScreen(self.out) catch {
+            return;
+        };
+    }
+};
+var global_editor: GlobalState = undefined;
 
 pub fn main() anyerror!void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -104,11 +122,19 @@ pub fn main() anyerror!void {
     const std_in = std.io.getStdIn();
     const std_out = std.io.getStdOut();
 
+    global_editor.editor = &editor;
+    global_editor.out = std_out;
+
     const window_size = try getWindowSize(std_in, std_out);
     editor.updateSize(window_size.height, window_size.width);
 
-    // TODO
-    // signal(SIGWINCH, handleSigWinCh);
+    const action = std.os.linux.Sigaction{
+        .handler = .{ .handler = handle_SIGWINCH },
+        .mask = std.os.linux.empty_sigset,
+        .flags = 0,
+        .restorer = null,
+    };
+    _ = std.os.linux.sigaction(std.os.linux.SIG.WINCH, &action, null);
 
     editor.selectSyntaxHighlight(args[1]);
     try editor.openFile(args[1]);
