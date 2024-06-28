@@ -1,6 +1,6 @@
 const std = @import("std");
 const File = std.fs.File;
-const Termios = std.os.termios;
+const Termios = std.posix.termios;
 
 const Editor = @import("editor.zig");
 const Key = @import("key.zig");
@@ -11,21 +11,32 @@ const Cursor = @import("cursor.zig");
 fn enableRawMode(stdin: File) anyerror!Termios {
     if (!stdin.isTty()) {
         std.log.err("passed fd is not a tty", .{});
-        std.os.exit(1);
+        std.os.linux.exit(1);
     }
 
-    var orig_termios = try std.os.tcgetattr(stdin.handle);
+    const orig_termios = try std.posix.tcgetattr(stdin.handle);
 
     // modify the original mode
     var raw = orig_termios;
     // input modes: no break, no CR to NL, no parity check, no strip char, no start/stop output control.
-    raw.iflag &= ~(std.os.linux.BRKINT | std.os.linux.ICRNL | std.os.linux.INPCK | std.os.linux.ISTRIP | std.os.linux.IXON);
+    raw.iflag.BRKINT = false;
+    raw.iflag.ICRNL = false;
+    raw.iflag.INPCK = false;
+    raw.iflag.ISTRIP = false;
+    raw.iflag.IXON = false;
+
     // output modes - disable post processing
-    raw.oflag &= ~(std.os.linux.OPOST);
+    raw.oflag.OPOST = false;
+
     // control modes - set 8 bit chars
-    raw.cflag |= (std.os.linux.CS8);
+    raw.cflag.CSIZE = .CS8;
+
     // local modes - choing off, canonical off, no extended functions, no signal chars (^Z,^C)
-    raw.lflag &= ~(std.os.linux.ECHO | std.os.linux.ICANON | std.os.linux.IEXTEN | std.os.linux.ISIG);
+    raw.lflag.ECHO = false;
+    raw.lflag.ICANON = false;
+    raw.lflag.IEXTEN = false;
+    raw.lflag.ISIG = false;
+
     // control chars - set return condition: min number of bytes and timer.
     // Return each byte, or zero for timeout.
     raw.cc[5] = 0;
@@ -33,13 +44,13 @@ fn enableRawMode(stdin: File) anyerror!Termios {
     raw.cc[7] = 1;
 
     // put terminal in raw mode after flushing
-    try std.os.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, raw);
+    try std.posix.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, raw);
 
     return orig_termios;
 }
 
 fn disableRawMode(orig_termios: Termios, stdin: File) anyerror!void {
-    try std.os.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, orig_termios);
+    try std.posix.tcsetattr(stdin.handle, std.os.linux.TCSA.FLUSH, orig_termios);
 }
 
 const Size = struct { height: u32, width: u32 };
@@ -51,13 +62,13 @@ fn getWindowSize(in: File, out: File) anyerror!Size {
     var ws: std.os.linux.winsize = undefined;
 
     const TIOCGWINSZ: u32 = 0x5413;
-    if (std.os.linux.ioctl(1, TIOCGWINSZ, @ptrToInt(&ws)) == -1 or ws.ws_col == 0) {
+    if (std.os.linux.ioctl(1, TIOCGWINSZ, @intFromPtr(&ws)) == -1 or ws.ws_col == 0) {
         // Get the initial position so we can restore it later.
-        var orig_pos = try Cursor.getCursorPosition(in, out);
+        const orig_pos = try Cursor.getCursorPosition(in, out);
         // Go to right/bottom margin and get position.
         _ = try out.write("\x1b[999C\x1b[999B");
         // Get new position
-        var pos = try Cursor.getCursorPosition(in, out);
+        const pos = try Cursor.getCursorPosition(in, out);
 
         // Restore position.
         var seq: [32]u8 = undefined;
@@ -144,7 +155,7 @@ pub fn main() anyerror!void {
     var exit: bool = false;
     while (!exit) {
         try editor.refreshScreen(std_out);
-        var key = try Key.readKey(std_in);
+        const key = try Key.readKey(std_in);
         exit = try editor.processKeypress(key);
     }
     try disableRawMode(orig_termios, std_in);

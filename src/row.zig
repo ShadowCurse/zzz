@@ -105,7 +105,7 @@ pub fn renderToString(self: *Self, coloff: u64, screencols: u64, string: *String
             remaining_line_width = screencols;
         }
         var render_chars = self.render.items[coloff..];
-        var highlight = self.highlight.items[coloff..];
+        const highlight = self.highlight.items[coloff..];
         for (0..remaining_line_width) |j| {
             switch (highlight[j]) {
                 HighlightType.HL_NORMAL => {
@@ -149,7 +149,7 @@ pub fn renderToString(self: *Self, coloff: u64, screencols: u64, string: *String
 pub fn updateSyntax(self: *Self) !void {
     // reset all syntax to normal
     try self.highlight.resize(self.render.items.len);
-    std.mem.set(HighlightType, self.highlight.items, HighlightType.HL_NORMAL);
+    @memset(self.highlight.items, HighlightType.HL_NORMAL);
 
     if (self.syntax == null) {
         return;
@@ -176,7 +176,7 @@ pub fn updateSyntax(self: *Self) !void {
         // Handle // comments.
         if (word_start and i + 2 < self.render.items.len and std.mem.eql(u8, self.render.items[i .. i + 2], scs)) {
             // From here to end is a comment
-            std.mem.set(HighlightType, self.highlight.items[i..self.highlight.items.len], HighlightType.HL_COMMENT);
+            @memset(self.highlight.items[i..self.highlight.items.len], HighlightType.HL_COMMENT);
             return;
         }
 
@@ -241,7 +241,7 @@ pub fn updateSyntax(self: *Self) !void {
                 }
             }
             if (found_keyword) |keyword| {
-                std.mem.set(HighlightType, self.highlight.items[i .. i + keyword.len], HighlightType.HL_KEYWORD1);
+                @memset(self.highlight.items[i .. i + keyword.len], HighlightType.HL_KEYWORD1);
                 i += keyword.len;
             } else {
                 i += 1;
@@ -261,19 +261,19 @@ pub fn updateRender(self: *Self) !void {
     // respecting tabs, substituting non printable characters with '?'.
     var tabs: u32 = 0;
     for (self.chars.items) |c| {
-        if (c == @enumToInt(Key.Key.TAB))
+        if (c == @intFromEnum(Key.Key.TAB))
             tabs += 1;
     }
 
     const tab_size = 4;
 
-    var size = self.chars.items.len + tabs * tab_size;
+    const size = self.chars.items.len + tabs * tab_size;
     try self.render.resize(size);
 
     var idx: u32 = 0;
     for (self.chars.items) |c| {
-        if (c == @enumToInt(Key.Key.TAB)) {
-            std.mem.set(u8, self.render.items[idx .. idx + tab_size], ' ');
+        if (c == @intFromEnum(Key.Key.TAB)) {
+            @memset(self.render.items[idx .. idx + tab_size], ' ');
             idx += tab_size;
         } else {
             self.render.items[idx] = c;

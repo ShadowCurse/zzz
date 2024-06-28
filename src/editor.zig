@@ -75,8 +75,8 @@ pub fn selectSyntaxHighlight(self: *Self, filename: []u8) void {
 
 // Insert the specified char at the current prompt position.
 fn insertChar(self: *Self, c: u8) !void {
-    var filerow = self.row_offset + self.cy;
-    var filecol = self.column_offset + self.cx;
+    const filerow = self.row_offset + self.cy;
+    const filecol = self.column_offset + self.cx;
     // If the row where the cursor is currently located does not exist in our
     // logical representaion of the file, add enough empty rows as needed.
     while (self.rows.items.len <= filerow) {
@@ -95,8 +95,8 @@ fn insertChar(self: *Self, c: u8) !void {
 
 // Delete the char at the current prompt position.
 fn delChar(self: *Self) !void {
-    var filerow = self.row_offset + self.cy;
-    var filecol = self.column_offset + self.cx;
+    const filerow = self.row_offset + self.cy;
+    const filecol = self.column_offset + self.cx;
 
     if (filerow >= self.rows.items.len or (filecol == 0 and filerow == 0)) {
         return;
@@ -118,7 +118,7 @@ fn delChar(self: *Self) !void {
         }
         self.cx = filecol;
         if (self.cx >= self.screen_width) {
-            var shift = (self.screen_width - self.cx) + 1;
+            const shift = (self.screen_width - self.cx) + 1;
             self.cx -= shift;
             self.column_offset += shift;
         }
@@ -392,7 +392,7 @@ pub fn openFile(self: *Self, filename: []u8) !void {
 
     var index: usize = 0;
     while (in_stream.readUntilDelimiterAlloc(self.allocator, '\n', 1024)) |line| : (index += 1) {
-        var row = try Row.new(line, index, self.syntax, self.allocator);
+        const row = try Row.new(line, index, self.syntax, self.allocator);
         try self.rows.append(row);
     } else |e| {
         if (e != error.EndOfStream) {

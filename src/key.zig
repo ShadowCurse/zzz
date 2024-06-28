@@ -52,26 +52,26 @@ pub const Key = union(KeyEnum) {
 };
 
 const KeyCodes = enum(u32) {
-    CTRL_C = @bitCast(u32, [_]u8{ 3, 170, 170, 170 }), // Ctrl-c
-    CTRL_D = @bitCast(u32, [_]u8{ 4, 170, 170, 170 }), // Ctrl-d
-    CTRL_F = @bitCast(u32, [_]u8{ 6, 170, 170, 170 }), // Ctrl-f
-    CTRL_H = @bitCast(u32, [_]u8{ 8, 170, 170, 170 }), // Ctrl-h
-    TAB = @bitCast(u32, [_]u8{ 9, 170, 170, 170 }), // Tab
-    CTRL_L = @bitCast(u32, [_]u8{ 12, 170, 170, 170 }), // Ctrl+l
-    ENTER = @bitCast(u32, [_]u8{ 13, 170, 170, 170 }), // Enter
-    CTRL_Q = @bitCast(u32, [_]u8{ 17, 170, 170, 170 }), // Ctrl-q
-    CTRL_S = @bitCast(u32, [_]u8{ 19, 170, 170, 170 }), // Ctrl-s
-    CTRL_U = @bitCast(u32, [_]u8{ 21, 170, 170, 170 }), // Ctrl-u
-    ESC = @bitCast(u32, [_]u8{ 27, 170, 170, 170 }), // Escape
-    BACKSPACE = @bitCast(u32, [_]u8{ 127, 170, 170, 170 }), // Backspace
+    CTRL_C = @bitCast([_]u8{ 3, 170, 170, 170 }), // Ctrl-c
+    CTRL_D = @bitCast([_]u8{ 4, 170, 170, 170 }), // Ctrl-d
+    CTRL_F = @bitCast([_]u8{ 6, 170, 170, 170 }), // Ctrl-f
+    CTRL_H = @bitCast([_]u8{ 8, 170, 170, 170 }), // Ctrl-h
+    TAB = @bitCast([_]u8{ 9, 170, 170, 170 }), // Tab
+    CTRL_L = @bitCast([_]u8{ 12, 170, 170, 170 }), // Ctrl+l
+    ENTER = @bitCast([_]u8{ 13, 170, 170, 170 }), // Enter
+    CTRL_Q = @bitCast([_]u8{ 17, 170, 170, 170 }), // Ctrl-q
+    CTRL_S = @bitCast([_]u8{ 19, 170, 170, 170 }), // Ctrl-s
+    CTRL_U = @bitCast([_]u8{ 21, 170, 170, 170 }), // Ctrl-u
+    ESC = @bitCast([_]u8{ 27, 170, 170, 170 }), // Escape
+    BACKSPACE = @bitCast([_]u8{ 127, 170, 170, 170 }), // Backspace
 
-    ARROW_LEFT = @bitCast(u32, [_]u8{ 27, 91, 68, 170 }),
-    ARROW_RIGHT = @bitCast(u32, [_]u8{ 27, 91, 67, 170 }),
-    ARROW_UP = @bitCast(u32, [_]u8{ 27, 91, 65, 170 }),
-    ARROW_DOWN = @bitCast(u32, [_]u8{ 27, 91, 66, 170 }),
-    DEL_KEY = @bitCast(u32, [_]u8{ 27, 91, 51, 126 }),
-    PAGE_UP = @bitCast(u32, [_]u8{ 27, 91, 53, 126 }),
-    PAGE_DOWN = @bitCast(u32, [_]u8{ 27, 91, 54, 126 }),
+    ARROW_LEFT = @bitCast([_]u8{ 27, 91, 68, 170 }),
+    ARROW_RIGHT = @bitCast([_]u8{ 27, 91, 67, 170 }),
+    ARROW_UP = @bitCast([_]u8{ 27, 91, 65, 170 }),
+    ARROW_DOWN = @bitCast([_]u8{ 27, 91, 66, 170 }),
+    DEL_KEY = @bitCast([_]u8{ 27, 91, 51, 126 }),
+    PAGE_UP = @bitCast([_]u8{ 27, 91, 53, 126 }),
+    PAGE_DOWN = @bitCast([_]u8{ 27, 91, 54, 126 }),
     _,
 };
 
@@ -80,8 +80,8 @@ pub fn readKey(in: File) anyerror!Key {
     var code: [4]u8 = undefined;
     var nread = try in.read(&code);
     while (nread == 0) : (nread = try in.read(&code)) {}
-    const key_code = @bitCast(u32, code);
-    return switch (@intToEnum(KeyCodes, key_code)) {
+    const key_code: u32 = @bitCast(code);
+    return switch (@as(KeyCodes, @enumFromInt(key_code))) {
         .CTRL_C => Key.CTRL_C,
         .CTRL_D => Key.CTRL_D,
         .CTRL_F => Key.CTRL_F,
@@ -101,6 +101,6 @@ pub fn readKey(in: File) anyerror!Key {
         .DEL_KEY => Key.DEL_KEY,
         .PAGE_UP => Key.PAGE_UP,
         .PAGE_DOWN => Key.PAGE_DOWN,
-        _ => Key { .Key = (code[0]) },
+        _ => Key{ .Key = (code[0]) },
     };
 }

@@ -39,15 +39,15 @@ pub fn getCursorPosition(in: File, out: File) anyerror!Position {
     buff[i] = 0;
 
     // Parse it.
-    if (buff[0] != @enumToInt(Key.Key.ESC) or buff[1] != '[') {
+    if (buff[0] != @intFromEnum(Key.Key.ESC) or buff[1] != '[') {
         return Error.CursorPositon;
     }
 
     var iter = std.mem.split(u8, buff[2..(i - 1)], ";");
-    var rows_str = iter.next().?;
-    var cols_str = iter.next().?;
-    var rows = try std.fmt.parseInt(u32, rows_str, 10);
-    var cols = try std.fmt.parseInt(u32, cols_str, 10);
+    const rows_str = iter.next().?;
+    const cols_str = iter.next().?;
+    const rows = try std.fmt.parseInt(u32, rows_str, 10);
+    const cols = try std.fmt.parseInt(u32, cols_str, 10);
 
     return Position{
         .row = rows,
